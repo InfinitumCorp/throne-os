@@ -75,6 +75,16 @@ class VaultFormatTest {
     }
 
     @Test
+    fun backupFilesAreRecognized() {
+        val blob = NetherVault.create(password, doc)
+        assertTrue(NetherVault.isVault(blob))
+        assertTrue(!NetherVault.isVault("name,url,username,password\n".toByteArray()))
+        assertTrue(!NetherVault.isVault(ByteArray(0)))
+        assertTrue(!NetherVault.isVault(blob.copyOfRange(0, NetherCipher.HEADER_LEN)))
+        assertEquals("nether-backup-2026-11-13.nether", NetherVault.backupName(1_794_528_000_000L))
+    }
+
+    @Test
     fun wrongPasswordDoesNotOpen() {
         val blob = NetherVault.create(password, doc)
         assertNull(NetherCipher.passwordOpens("wrong".toCharArray(), blob))

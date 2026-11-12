@@ -82,6 +82,34 @@ fun NetherRoot(store: NetherStore) {
         }
     }
 
+    // Restore an encrypted backup. Only offered before a vault exists, so it never overwrites one.
+    val restore = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bytes = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val buffer = java.io.ByteArrayOutputStream()
+                val chunk = ByteArray(64 * 1024)
+                while (true) {
+                    val read = input.read(chunk)
+                    if (read < 0) break
+                    buffer.write(chunk, 0, read)
+                    if (buffer.size() > NetherVault.MAX_BACKUP_BYTES) return@use null
+                }
+                buffer.toByteArray()
+            }
+        }.getOrNull()
+        when {
+            bytes == null || !NetherVault.isVault(bytes) -> message = "That file is not a Nether backup."
+            store.read(VaultFiles.PRIMARY) != null -> message = "A vault already exists. Nothing was replaced."
+            else -> {
+                store.write(VaultFiles.PRIMARY, bytes)
+                meta.write(meta.read().put("failures", 0))
+                message = "Backup restored. Unlock it with its master password."
+                screen = Screen.LOCK
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -95,7 +123,7 @@ fun NetherRoot(store: NetherStore) {
         }
         Spacer(Modifier.height(12.dp))
         when (screen) {
-            Screen.CREATE -> CreateVault(onCreate = { password, duress ->
+            Screen.CREATE -> CreateVault(onRestore = { restore.launch(arrayOf("*/*")) }, onCreate = { password, duress ->
                 val blob = NetherVault.create(password)
                 store.write(VaultFiles.PRIMARY, blob)
                 if (duress != null) store.write(VaultFiles.DECOY, NetherVault.create(duress))
@@ -238,7 +266,7 @@ private fun saveEntry(store: NetherStore, entry: NetherEntry) {
 }
 
 @Composable
-private fun CreateVault(onCreate: (CharArray, CharArray?) -> Unit) {
+private fun CreateVault(onRestore: () -> Unit, onCreate: (CharArray, CharArray?) -> Unit) {
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var duress by remember { mutableStateOf("") }
@@ -252,6 +280,9 @@ private fun CreateVault(onCreate: (CharArray, CharArray?) -> Unit) {
                 onCreate(password.toCharArray(), duress.toCharArray().takeIf { duress.length >= 4 })
             }
         })
+        Spacer(Modifier.height(8.dp))
+        Text("Have a backup? Restore it instead. It opens with the master password it was made with.", color = ThroneMuted)
+        ThroneButton("Restore from backup", onRestore)
     }
 }
 
@@ -401,10 +432,22 @@ private fun SettingsScreen(
                 meta.write(meta.read().put(meta.biometricField, Base64.getEncoder().encodeToString(packed)))
             }, onError = {})
         })
-        val export = store.read(if (NetherSession.decoy) VaultFiles.DECOY else VaultFiles.PRIMARY)
-        if (export != null) {
-            Text("Export is the encrypted .nether blob. Share it from a file manager in this app's files.", color = ThroneMuted)
+        val context = LocalContext.current
+        var backupStatus by remember { mutableStateOf("") }
+        val backup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            val blob = store.read(if (NetherSession.decoy) VaultFiles.DECOY else VaultFiles.PRIMARY)
+            backupStatus = if (blob == null) {
+                "Nothing to back up."
+            } else {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(blob) } ?: error("no stream")
+                }.fold({ "Backup saved. It is encrypted and opens only with your master password." }, { "Backup failed." })
+            }
         }
+        Text("Back up: saves the encrypted vault as a file you choose. Keep a copy off this phone.", color = ThroneMuted)
+        ThroneButton("Back up vault", { backup.launch(NetherVault.backupName(System.currentTimeMillis())) })
+        if (backupStatus.isNotEmpty()) Text(backupStatus, color = ThroneMuted)
         Field("Import CSV or otpauth", pasted) { pasted = it }
         ThroneButton("Import", {
             val note = Importers.throneVaultNote(pasted)
