@@ -182,7 +182,12 @@ fun NetherRoot(store: NetherStore) {
                     val packed = meta.biometric() ?: return@LockScreen
                     BiometricVault.unlock(activity, packed, onKey = { key ->
                         val blob = store.read(VaultFiles.PRIMARY) ?: return@unlock
-                        val doc = VaultDocumentFrom(key, blob)
+                        val doc = runCatching { VaultDocumentFrom(key, blob) }.getOrNull()
+                        if (doc == null) {
+                            key.fill(0)
+                            message = "Biometric unlock is out of date. Use your password, then set up biometric again."
+                            return@unlock
+                        }
                         NetherSession.unlock(doc, key, decoy = false)
                         screen = Screen.LIST
                     }, onError = { message = it })
@@ -426,12 +431,23 @@ private fun SettingsScreen(
         ThroneButton("Save limit", {
             meta.write(meta.read().put("wipeAfter", wipe.toIntOrNull() ?: 0))
         })
+        var bioStatus by remember { mutableStateOf("") }
         ThroneButton("Enroll biometric", {
             val key = NetherSession.key ?: return@ThroneButton
+            if (!BiometricVault.available(activity)) {
+                bioStatus = "No strong fingerprint or face unlock is set up on this phone."
+                return@ThroneButton
+            }
             BiometricVault.enroll(activity, key, onDone = { packed ->
-                meta.write(meta.read().put(meta.biometricField, Base64.getEncoder().encodeToString(packed)))
-            }, onError = {})
+                // In a duress session, look the same but never store the decoy key:
+                // biometric unlock always opens the real vault.
+                if (!NetherSession.decoy) {
+                    meta.write(meta.read().put(meta.biometricField, Base64.getEncoder().encodeToString(packed)))
+                }
+                bioStatus = "Biometric unlock is on."
+            }, onError = { bioStatus = it })
         })
+        if (bioStatus.isNotEmpty()) Text(bioStatus, color = ThroneMuted)
         val context = LocalContext.current
         var backupStatus by remember { mutableStateOf("") }
         val backup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->

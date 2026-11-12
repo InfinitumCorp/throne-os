@@ -1,6 +1,10 @@
 package app.infinitum.nether.ui
 
+import android.content.BroadcastReceiver
 import android.content.ClipData
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
@@ -69,7 +73,33 @@ object NetherClipboard {
     }
 }
 
+/** Locks the vault as soon as the screen turns off. Registered once per process. */
+private object ScreenOffLock {
+    @Volatile private var registered = false
+
+    fun register(context: Context) {
+        if (registered) return
+        synchronized(this) {
+            if (registered) return
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    if (intent.action == Intent.ACTION_SCREEN_OFF) NetherSession.lock()
+                }
+            }
+            ContextCompat.registerReceiver(
+                context.applicationContext,
+                receiver,
+                IntentFilter(Intent.ACTION_SCREEN_OFF),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            registered = true
+        }
+    }
+}
+
+/** Locks 60 seconds after Nether leaves the screen, and at once when the screen turns off. */
 fun FragmentActivity.bindNetherLock(timeoutMs: Long = 60_000L) {
+    ScreenOffLock.register(this)
     val handler = Handler(Looper.getMainLooper())
     val lock = Runnable { NetherSession.lock() }
     lifecycle.addObserver(object : DefaultLifecycleObserver {
