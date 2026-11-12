@@ -48,7 +48,7 @@ object VaultMessages {
 
     fun shareText(armored: String): String = buildString {
         append("THRONE][OS™ encrypted message. This is ciphertext. ")
-        append("Open it in THRONE][OS™ Vault. ")
+        append("Open it in THRONE][OS™ Nether. ")
         append("Plain SMS and MMS are not end-to-end encrypted.")
         append('\n')
         append(armored)
