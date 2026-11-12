@@ -12,7 +12,7 @@ class VaultBlobProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {
-        val file = file(uri)
+        val file = file(uri) ?: throw java.io.FileNotFoundException("Unknown vault file.")
         if (!file.exists()) {
             if (!mode.contains("w") && !mode.contains("t")) return null
             file.parentFile?.mkdirs()
@@ -29,7 +29,7 @@ class VaultBlobProvider : ContentProvider() {
     }
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
-        return if (file(uri).delete()) 1 else 0
+        return if (file(uri)?.delete() == true) 1 else 0
     }
 
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
@@ -37,8 +37,16 @@ class VaultBlobProvider : ContentProvider() {
     override fun insert(uri: Uri, values: ContentValues?): Uri? = null
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
 
-    private fun file(uri: Uri): File {
-        val name = uri.lastPathSegment ?: VaultFiles.PRIMARY
+    /** Only the three vault files, by exact name. Anything else (including encoded "../") is refused. */
+    private fun file(uri: Uri): File? {
+        val segments = uri.pathSegments
+        if (segments.size != 1) return null
+        val name = segments[0]
+        if (name !in ALLOWED) return null
         return File(context!!.filesDir, "nether/$name.vault")
+    }
+
+    private companion object {
+        val ALLOWED = setOf(VaultFiles.PRIMARY, VaultFiles.DECOY, VaultFiles.META)
     }
 }

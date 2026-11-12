@@ -31,6 +31,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".AutofillUnlockActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
         <provider
             android:name="app.infinitum.nether.ui.VaultBlobProvider"
             android:authorities="app.infinitum.nether.vault"

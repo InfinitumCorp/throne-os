@@ -72,7 +72,8 @@ fun NetherRoot(store: NetherStore) {
     var query by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf(NetherEntry()) }
     var favoritesOnly by remember { mutableStateOf(false) }
-    val meta = remember { Meta(store) }
+    val meta = remember { Meta(store, context.packageName) }
+    var checking by remember { mutableStateOf(false) }
     val scan = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val text = result.data?.getStringExtra(QrScanActivity.EXTRA).orEmpty()
         if (result.resultCode == Activity.RESULT_OK && text.startsWith("otpauth://")) {
@@ -107,6 +108,8 @@ fun NetherRoot(store: NetherStore) {
             Screen.LOCK -> LockScreen(
                 biometric = meta.biometric() != null && BiometricVault.available(activity),
                 onUnlock = { password ->
+                    // One attempt at a time, so repeated taps can't skip the delay or the wipe limit.
+                    if (checking) return@LockScreen
                     val failures = meta.failures()
                     if (meta.wipeAfter() > 0 && failures >= meta.wipeAfter()) {
                         store.delete(VaultFiles.PRIMARY)
@@ -115,6 +118,9 @@ fun NetherRoot(store: NetherStore) {
                         screen = Screen.CREATE
                         return@LockScreen
                     }
+                    checking = true
+                    // Count the attempt before trying it, so killing the app mid-check still counts.
+                    meta.write(meta.read().put("failures", failures + 1))
                     message = "Checking."
                     Thread {
                         Thread.sleep(NetherKdf.delayMillis(failures))
@@ -132,15 +138,15 @@ fun NetherRoot(store: NetherStore) {
                                 }
                                 decoyOpen != null -> {
                                     NetherSession.unlock(decoyOpen.document, decoyOpen.key, decoy = true)
+                                    meta.write(meta.read().put("failures", 0))
                                     screen = Screen.LIST
                                     message = ""
                                 }
                                 else -> {
-                                    val next = failures + 1
-                                    meta.write(meta.read().put("failures", next))
                                     message = "Wrong password."
                                 }
                             }
+                            checking = false
                         }
                     }.start()
                 },
@@ -392,7 +398,7 @@ private fun SettingsScreen(
         ThroneButton("Enroll biometric", {
             val key = NetherSession.key ?: return@ThroneButton
             BiometricVault.enroll(activity, key, onDone = { packed ->
-                meta.write(meta.read().put("biometric", Base64.getEncoder().encodeToString(packed)))
+                meta.write(meta.read().put(meta.biometricField, Base64.getEncoder().encodeToString(packed)))
             }, onError = {})
         })
         val export = store.read(if (NetherSession.decoy) VaultFiles.DECOY else VaultFiles.PRIMARY)
@@ -442,10 +448,20 @@ private fun SecretField(label: String, value: String, onChange: (String) -> Unit
     )
 }
 
-private class Meta(private val store: NetherStore) {
+/**
+ * Settings shared by Nether and Suite. Each app wraps the vault key with its own
+ * Keystore key, so the fingerprint copy is stored per app ("biometric:<package>").
+ */
+private class Meta(private val store: NetherStore, packageName: String) {
+    val biometricField = "biometric:$packageName"
     fun read(): JSONObject = store.read(VaultFiles.META)?.let { runCatching { JSONObject(it.toString(Charsets.UTF_8)) }.getOrNull() } ?: JSONObject()
     fun write(json: JSONObject) = store.write(VaultFiles.META, json.toString().toByteArray())
     fun failures(): Int = read().optInt("failures")
     fun wipeAfter(): Int = read().optInt("wipeAfter")
-    fun biometric(): ByteArray? = read().optString("biometric").takeIf { it.isNotBlank() }?.let { Base64.getDecoder().decode(it) }
+    fun biometric(): ByteArray? {
+        val json = read()
+        // "biometric" is the old shared field; it only works in the app that enrolled it.
+        val value = json.optString(biometricField).ifBlank { json.optString("biometric") }
+        return value.takeIf { it.isNotBlank() }?.let { Base64.getDecoder().decode(it) }
+    }
 }
