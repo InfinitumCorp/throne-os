@@ -372,7 +372,7 @@ class ProductCatalogTest {
         val file = java.io.File(System.getProperty("throne.catalog"))
         val products = ProductCatalog.parse(file.readText())
         val byId = products.associateBy { it.id }
-        assertEquals(25, products.size)
+        assertEquals(24, products.size)
         assertEquals("https://infinitumfabric.app", byId.getValue("fabric").url)
         assertEquals(listOf("app.infinitumfabric.client", "com.infinitum.fabric"), byId.getValue("fabric").packages)
         assertEquals("https://rchtch.app", byId.getValue("architect").url)
@@ -381,7 +381,7 @@ class ProductCatalogTest {
         assertTrue(byId.getValue("architect").hosts.contains("cndctr.app"))
         assertTrue(byId.getValue("architect").hosts.contains("rchtch.app"))
         assertFalse(byId.containsKey("conductor"))
-        assertEquals(null, byId.getValue("zerkalo").url)
+        assertFalse(byId.containsKey("zerkalo"))
         assertEquals(null, byId.getValue("onemind").url)
         assertEquals(null, byId.getValue("conjure").url)
         assertEquals("https://infinitumdefense.com", byId.getValue("defense").url)
@@ -416,7 +416,7 @@ class ProductCatalogTest {
         )
         assertTrue(archangel.infinitum.none { it.productId == "aether" })
         assertTrue(archangel.others.none { it.packageName == "com.infinitum.aether" })
-        assertEquals(19, archangel.infinitum.size)
+        assertEquals(18, archangel.infinitum.size)
         val keter = ShelfArranger.arrange(
             products,
             listOf(Launchable("app.infinitumfabric.client", "Main", "FabriC++")),
@@ -428,7 +428,7 @@ class ProductCatalogTest {
         assertEquals(ShelfKind.WEB, keter.infinitum.first { it.productId == "architect" }.kind)
         assertEquals(ShelfKind.PLACEHOLDER, keter.infinitum.first { it.productId == "onemind" }.kind)
         assertTrue(keter.infinitum.any { it.productId == "aether" && it.kind == ShelfKind.WEB })
-        assertEquals(25, keter.infinitum.size)
+        assertEquals(24, keter.infinitum.size)
     }
 
     @Test
