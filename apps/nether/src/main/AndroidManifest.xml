@@ -6,6 +6,7 @@
         android:protectionLevel="signature" />
     <uses-permission android:name="app.infinitum.nether.ACCESS_VAULT" />
 
+    <!-- Nether holds ACCESS_VAULT only to copy a vault an older Suite created. Nether exports no vault provider. -->
     <queries>
         <package android:name="com.infinitum.throne.suite" />
         <package android:name="app.infinitum.veil.browser" />
@@ -36,13 +37,6 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
-
-        <provider
-            android:name="app.infinitum.nether.ui.VaultBlobProvider"
-            android:authorities="app.infinitum.nether.vault"
-            android:exported="true"
-            android:grantUriPermissions="false"
-            android:permission="app.infinitum.nether.ACCESS_VAULT" />
 
         <service
             android:name=".NetherAutofillService"

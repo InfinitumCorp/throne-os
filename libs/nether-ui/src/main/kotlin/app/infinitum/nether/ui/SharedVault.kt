@@ -14,7 +14,6 @@ object VaultFiles {
     const val PRIMARY = "primary"
     const val DECOY = "decoy"
     const val META = "meta"
-    const val NETHER_AUTHORITY = "app.infinitum.nether.vault"
     const val SUITE_AUTHORITY = "com.infinitum.throne.suite.nether"
     const val PERMISSION = "app.infinitum.nether.ACCESS_VAULT"
 }
@@ -67,11 +66,5 @@ object SharedVault {
             remote.read(VaultFiles.META)?.let { local.write(VaultFiles.META, it) }
         }
         return local
-    }
-
-    fun forSuite(context: Context): NetherStore {
-        val remote = RemoteVaultStore(context, VaultFiles.NETHER_AUTHORITY)
-        if (remote.read(VaultFiles.META) != null || remote.read(VaultFiles.PRIMARY) != null) return remote
-        return FileVaultStore(File(context.filesDir, "nether"))
     }
 }

@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Suite never opens the vault (it has INTERNET). Its provider below only lets Nether
+         pick up a vault that an older Suite created, guarded by this signature permission. -->
     <permission
         android:name="app.infinitum.nether.ACCESS_VAULT"
         android:protectionLevel="signature" />
-    <uses-permission android:name="app.infinitum.nether.ACCESS_VAULT" />
+    <uses-permission
+        android:name="android.permission.CAMERA"
+        tools:node="remove" />
 
     <queries>
         <intent>
@@ -13,7 +18,6 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
         <package android:name="app.infinitum.nether" />
-        <provider android:authorities="app.infinitum.nether.vault" />
     </queries>
 
     <application
@@ -35,6 +39,9 @@
             android:exported="true"
             android:grantUriPermissions="false"
             android:permission="app.infinitum.nether.ACCESS_VAULT" />
+        <activity
+            android:name="app.infinitum.nether.ui.QrScanActivity"
+            tools:node="remove" />
         <activity
             android:name=".ShellActivity"
             android:exported="true"
