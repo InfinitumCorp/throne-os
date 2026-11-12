@@ -171,9 +171,10 @@ object NetherVault {
         return Unlock(document, key)
     }
 
+    /** Re-seals with the same salt and key cost (the key was derived from them). Always writes the current format. */
     fun save(key: ByteArray, blob: ByteArray, document: VaultDocument): ByteArray {
         val header = NetherCipher.parse(blob)
-        return NetherCipher.seal(key, document.toJson(), header.salt, header.kdf)
+        return NetherCipher.seal(key, document.toJson(), header.salt, header.kdf, header.params)
     }
 }
 
