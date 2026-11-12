@@ -26,6 +26,14 @@ object ProductMarks {
         "conjure" -> R.drawable.ic_mark_conjure
         "nether" -> R.drawable.ic_mark_nether
         "corporation", "defense", "academy", "aether" -> R.drawable.ic_mark_lattice
+        // From each product's page on infinitumcorporation.ai, 12 Nov 2026.
+        "flower" -> R.drawable.ic_mark_flower
+        "pollen" -> R.drawable.ic_mark_pollen
+        "odin" -> R.drawable.ic_mark_odin
+        "odin-daemon" -> R.drawable.ic_mark_daemon
+        "argus" -> R.drawable.ic_mark_argus
+        "firm-wallet" -> R.drawable.ic_mark_firm
+        "firmament" -> R.drawable.ic_mark_firmament
         else -> null
     }
 

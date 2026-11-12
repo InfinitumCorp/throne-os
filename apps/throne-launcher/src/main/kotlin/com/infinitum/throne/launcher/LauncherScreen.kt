@@ -11,11 +11,19 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,13 +39,13 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -47,266 +55,989 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.Image
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.infinitum.throne.core.catalog.ProductCatalog
 import com.infinitum.throne.core.home.Edition
-import com.infinitum.throne.core.home.HomePage
 import com.infinitum.throne.ui.HydratedTile
+import com.infinitum.throne.ui.IconSquircle
 import com.infinitum.throne.ui.ThroneInk
 import com.infinitum.throne.ui.ThroneMuted
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.launch
 
 private val Brand = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal, letterSpacing = 0.sp)
-private val SearchFill = Color(0xFFF3F3F5)
 private val DockFill = Color(0xE8E4E4E9)
 private val DockShape = RoundedCornerShape(36.dp)
+
+/** iOS-style layout metrics. */
 private val TileSize = 60.dp
+private val DockReserve = 108.dp
+private val GroupedBackground = Color(0xFFF2F2F7)
+private val FieldFill = Color(0x1F767680)
+private val Separator = Color(0x1F3C3C43)
+private val CardShape = RoundedCornerShape(14.dp)
+
+/** Soft, near-white wallpaper so white tiles read the way they do on a light iPhone home screen. */
+private val Wallpaper = Brush.verticalGradient(
+    0f to Color(0xFFFAFAFC),
+    0.45f to Color(0xFFEFF1F6),
+    1f to Color(0xFFE2E5EE),
+)
 
 @Composable
 fun LauncherScreen(viewModel: LauncherViewModel) {
     val state by viewModel.state
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    var searchOpen by remember { mutableStateOf(false) }
+    var menuFor by remember { mutableStateOf<AppEntry?>(null) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) viewModel.refresh()
+            // Leaving for an app returns to a clean home screen, as on iOS.
+            if (event == Lifecycle.Event.ON_STOP) {
+                viewModel.onQuery("")
+                searchOpen = false
+                menuFor = null
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val query = state.query.trim()
     val focus = LocalFocusManager.current
-    var searchFocused by androidx.compose.runtime.mutableStateOf(false)
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val contactsPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) viewModel.onContactsGranted() else viewModel.dismissContactsPrompt()
     }
-    BackHandler(enabled = query.isNotEmpty() && !state.showAbout) {
+    val closeSearch = {
         viewModel.onQuery("")
+        searchOpen = false
         focus.clearFocus()
     }
+    val showSearch = searchOpen || query.isNotEmpty()
+    BackHandler(enabled = menuFor != null) { menuFor = null }
+    BackHandler(enabled = showSearch && menuFor == null && !state.showAbout) { closeSearch() }
+
     val infinitumGrid = rememberLazyGridState()
     val othersGrid = rememberLazyGridState()
     val pagerState = rememberPagerState(pageCount = { 2 })
+    val overlay = showSearch || menuFor != null
+    val blur by animateDpAsState(if (overlay) 22.dp else 0.dp, tween(220), label = "home-blur")
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White)
-            .windowInsetsPadding(WindowInsets.safeDrawing),
+            .background(Wallpaper),
     ) {
-        if (state.showAbout) {
-            AboutScreen(
-                edition = state.edition.label,
-                onBack = viewModel::closeAbout,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = 108.dp),
-            )
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 22.dp),
-            ) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "THRONE][OS™",
-                    style = Brand.copy(fontWeight = FontWeight.Bold, fontSize = 15.sp, letterSpacing = 0.4.sp),
-                    color = ThroneInk,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = viewModel::openAbout),
+        Box(
+            Modifier
+                .fillMaxSize()
+                .blur(blur)
+                .windowInsetsPadding(WindowInsets.safeDrawing),
+        ) {
+            if (state.showAbout) {
+                AboutScreen(
+                    edition = if (state.edition == Edition.KETER) "^KETERv1" else state.edition.label,
+                    onBack = viewModel::closeAbout,
+                    modifier = Modifier.fillMaxSize(),
                 )
+            } else {
+                Column(Modifier.fillMaxSize()) {
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                    ) { page ->
+                        val apps = if (page == 0) state.infinitum else state.others
+                        val empty = if (state.loading) {
+                            "Reading apps."
+                        } else if (page == 0) {
+                            "The product catalog is empty."
+                        } else {
+                            "No other launchable apps."
+                        }
+                        AppGrid(
+                            apps = apps,
+                            state = if (page == 0) infinitumGrid else othersGrid,
+                            empty = empty,
+                            onOpen = { openApp(context, it) },
+                            onMenu = { menuFor = it },
+                            onBlankLongPress = viewModel::openAbout,
+                        )
+                    }
+                    SearchPill(
+                        page = pagerState.currentPage,
+                        pages = 2,
+                        swiping = pagerState.isScrollInProgress,
+                        onClick = { searchOpen = true },
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(top = 10.dp, bottom = 14.dp),
+                    )
+                    Spacer(Modifier.height(DockReserve))
+                }
+            }
+        }
+
+        if (!overlay && !imeVisible) FrostedCallDock(
+            messages = state.messages,
+            onCall = { openDialer(context) },
+            onCamera = { openCamera(context) },
+            onMessages = { message -> openMessages(context, message) },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.safeDrawing),
+        )
+
+        AnimatedVisibility(
+            visible = showSearch && !state.showAbout,
+            enter = fadeIn(tween(180)),
+            exit = fadeOut(tween(160)),
+        ) {
+            Spotlight(
+                value = state.query,
+                query = query,
+                hits = state.hits,
+                onValueChange = viewModel::onQuery,
+                onCancel = closeSearch,
+                onSearch = {
+                    val exact = PhoneSearch.exactApp(state.hits.apps, query)
+                    if (exact != null) openApp(context, exact) else openVeil(context, query)
+                    focus.clearFocus()
+                },
+                onApp = { openApp(context, it) },
+                onVeil = { openVeil(context, query) },
+                onContact = { openContact(context, it) },
+                onCall = { openTel(context, it) },
+                onMessage = { openSms(context, it) },
+                onSetting = { openSetting(context, it) },
+                onFile = { openFile(context, it) },
+                onAllowContacts = { contactsPermission.launch(Manifest.permission.READ_CONTACTS) },
+            )
+        }
+
+        val menuApp = menuFor
+        AnimatedVisibility(
+            visible = menuApp != null,
+            enter = fadeIn(tween(160)) + scaleIn(initialScale = 0.92f),
+            exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.96f),
+        ) {
+            if (menuApp != null) {
+                AppMenu(
+                    app = menuApp,
+                    onOpen = {
+                        menuFor = null
+                        openApp(context, menuApp)
+                    },
+                    onInfo = {
+                        menuFor = null
+                        openInfo(context, menuApp)
+                    },
+                    onDismiss = { menuFor = null },
+                )
+            }
+        }
+    }
+}
+
+/* ---------- Home ---------- */
+
+@Composable
+private fun AppGrid(
+    apps: List<AppEntry>,
+    state: LazyGridState,
+    empty: String,
+    onOpen: (AppEntry) -> Unit,
+    onMenu: (AppEntry) -> Unit,
+    onBlankLongPress: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = LocalHapticFeedback.current
+    val blank = Modifier.pointerInput(Unit) {
+        detectTapGestures(onLongPress = {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            onBlankLongPress()
+        })
+    }
+    if (apps.isEmpty()) {
+        Box(modifier.fillMaxSize().then(blank), contentAlignment = Alignment.Center) {
+            if (empty.isNotEmpty()) {
                 Text(
-                    text = if (state.edition == Edition.KETER) "^KETERv1" else state.edition.label,
-                    style = Brand.copy(fontSize = 12.sp),
+                    empty,
+                    style = Brand.copy(fontSize = 15.sp),
                     color = ThroneMuted,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 2.dp),
                 )
-                Spacer(Modifier.height(16.dp))
-                SearchField(
-                    value = state.query,
-                    onValueChange = viewModel::onQuery,
-                    onFocus = { searchFocused = it },
-                    onClear = {
-                        viewModel.onQuery("")
-                        searchFocused = false
-                        focus.clearFocus()
+            }
+        }
+        return
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(4),
+        state = state,
+        modifier = modifier
+            .fillMaxSize()
+            .then(blank),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 22.dp, bottom = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        items(apps, key = { it.key }) { app ->
+            AppTile(app, onOpen, onMenu)
+        }
+    }
+}
+
+@Composable
+private fun AppTile(
+    app: AppEntry,
+    onOpen: (AppEntry) -> Unit,
+    onMenu: (AppEntry) -> Unit,
+) {
+    val scale = remember(app.key) { Animatable(1f) }
+    val haptics = LocalHapticFeedback.current
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+                clip = false
+            }
+            .pointerInput(app.key) {
+                detectTapGestures(
+                    onPress = {
+                        scale.animateTo(0.88f, spring(dampingRatio = 0.7f, stiffness = 700f))
+                        tryAwaitRelease()
+                        scale.animateTo(
+                            1f,
+                            spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessMedium,
+                            ),
+                        )
                     },
-                    onSearch = {
-                        val exact = PhoneSearch.exactApp(state.hits.apps, query)
-                        if (exact != null) openApp(context, exact) else openVeil(context, query)
-                        focus.clearFocus()
+                    onTap = { onOpen(app) },
+                    onLongPress = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onMenu(app)
                     },
                 )
-                Spacer(Modifier.height(14.dp))
-                if (query.isNotEmpty()) {
-                    SearchResults(
-                        query = query,
-                        hits = state.hits,
-                        onApp = { openApp(context, it) },
-                        onVeil = { openVeil(context, query) },
-                        onContact = { openContact(context, it) },
-                        onCall = { openTel(context, it) },
-                        onMessage = { openSms(context, it) },
-                        onSetting = { openSetting(context, it) },
-                        onFile = { openFile(context, it) },
-                        onAllowContacts = { contactsPermission.launch(Manifest.permission.READ_CONTACTS) },
-                        modifier = Modifier.weight(1f),
+            },
+    ) {
+        HydratedTile(
+            productId = app.productId,
+            fallback = app.icon,
+            contentDescription = app.label,
+            colorIcon = app.colorIcon,
+            flat = true,
+            modifier = Modifier.size(TileSize),
+        )
+        Text(
+            text = app.label,
+            style = Brand.copy(fontSize = 11.5.sp, fontWeight = FontWeight.Medium),
+            color = ThroneInk,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .fillMaxWidth(),
+        )
+    }
+}
+
+/** The "Search" capsule above the dock. While pages are swiping it shows the page dots instead. */
+@Composable
+private fun SearchPill(
+    page: Int,
+    pages: Int,
+    swiping: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier
+            .height(30.dp)
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.62f))
+            .border(0.6.dp, Color.Black.copy(alpha = 0.06f), shape)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "Search" }
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Crossfade(targetState = swiping, animationSpec = tween(160), label = "pill") { dots ->
+            if (dots) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.width(62.dp), horizontalArrangement = Arrangement.Center) {
+                    repeat(pages) { index ->
+                        Box(
+                            Modifier
+                                .padding(horizontal = 4.dp)
+                                .size(7.dp)
+                                .background(
+                                    if (page == index) ThroneInk else ThroneInk.copy(alpha = 0.25f),
+                                    CircleShape,
+                                ),
+                        )
+                    }
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.width(62.dp), horizontalArrangement = Arrangement.Center) {
+                    MagnifierGlyph(ThroneInk, 12.dp)
+                    Text(
+                        "Search",
+                        style = Brand.copy(fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                        color = ThroneInk,
+                        modifier = Modifier.padding(start = 5.dp),
                     )
-                } else {
-                    val scope = rememberCoroutineScope()
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        PageTab("INFINITUM", pagerState.currentPage == 0) {
-                            scope.launch {
-                                pagerState.animateScrollToPage(
-                                    0,
-                                    animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow),
-                                )
-                            }
-                        }
-                        Spacer(Modifier.size(28.dp))
-                        PageTab("OTHERS", pagerState.currentPage == 1) {
-                            scope.launch {
-                                pagerState.animateScrollToPage(
-                                    1,
-                                    animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow),
-                                )
+                }
+            }
+        }
+    }
+}
+
+/* ---------- Long-press menu ---------- */
+
+@Composable
+private fun AppMenu(
+    app: AppEntry,
+    onOpen: () -> Unit,
+    onInfo: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val absorb = remember { MutableInteractionSource() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.10f))
+            .clickable(interactionSource = absorb, indication = null, onClick = onDismiss)
+            .windowInsetsPadding(WindowInsets.safeDrawing),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            HydratedTile(
+                productId = app.productId,
+                fallback = app.icon,
+                contentDescription = app.label,
+                colorIcon = app.colorIcon,
+                flat = true,
+                modifier = Modifier.size(88.dp),
+            )
+            Text(
+                app.label,
+                style = Brand.copy(fontSize = 15.sp, fontWeight = FontWeight.Medium),
+                color = ThroneInk,
+                modifier = Modifier.padding(top = 10.dp, bottom = 16.dp),
+            )
+            Column(
+                Modifier
+                    .width(250.dp)
+                    .shadow(18.dp, CardShape, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
+                    .clip(CardShape)
+                    .background(Color.White.copy(alpha = 0.94f)),
+            ) {
+                MenuRow("Open", onOpen)
+                if (app.packageName != null) {
+                    HairlineDivider(start = 0.dp)
+                    MenuRow("App Info", onInfo)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MenuRow(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        style = Brand.copy(fontSize = 17.sp),
+        color = ThroneInk,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+    )
+}
+
+/* ---------- Spotlight search ---------- */
+
+@Composable
+private fun Spotlight(
+    value: String,
+    query: String,
+    hits: SearchHits,
+    onValueChange: (String) -> Unit,
+    onCancel: () -> Unit,
+    onSearch: () -> Unit,
+    onApp: (AppEntry) -> Unit,
+    onVeil: () -> Unit,
+    onContact: (ContactHit) -> Unit,
+    onCall: (ContactHit) -> Unit,
+    onMessage: (ContactHit) -> Unit,
+    onSetting: (SettingHit) -> Unit,
+    onFile: (FileHit) -> Unit,
+    onAllowContacts: () -> Unit,
+) {
+    val requester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        requester.requestFocus()
+        keyboard?.show()
+    }
+    val absorb = remember { MutableInteractionSource() }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Color.White.copy(alpha = 0.55f))
+            .clickable(interactionSource = absorb, indication = null, onClick = {})
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(horizontal = 16.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 10.dp, bottom = 14.dp),
+        ) {
+            SearchBox(
+                value = value,
+                onValueChange = onValueChange,
+                onSearch = onSearch,
+                requester = requester,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "Cancel",
+                style = Brand.copy(fontSize = 17.sp),
+                color = ThroneInk,
+                modifier = Modifier
+                    .clickable(onClick = onCancel)
+                    .padding(start = 12.dp, top = 6.dp, bottom = 6.dp),
+            )
+        }
+        if (query.isEmpty()) return@Column
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            item(key = "veil") {
+                Card {
+                    ResultRow(
+                        title = "Search with VEIL",
+                        detail = "“$query”",
+                        icon = { MarkSquare { MagnifierGlyph(Color.White, 15.dp) } },
+                        onClick = onVeil,
+                        chevron = true,
+                    )
+                }
+            }
+            if (hits.apps.isNotEmpty()) {
+                item(key = "apps") {
+                    SectionHeader("Apps")
+                    Card {
+                        hits.apps.chunked(4).forEach { row ->
+                            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 6.dp)) {
+                                row.forEach { app ->
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable { onApp(app) },
+                                    ) {
+                                        HydratedTile(
+                                            productId = app.productId,
+                                            fallback = app.icon,
+                                            contentDescription = app.label,
+                                            colorIcon = app.colorIcon,
+                                            flat = true,
+                                            modifier = Modifier.size(52.dp),
+                                        )
+                                        Text(
+                                            app.label,
+                                            style = Brand.copy(fontSize = 11.sp),
+                                            color = ThroneInk,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 5.dp, start = 2.dp, end = 2.dp),
+                                        )
+                                    }
+                                }
+                                repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
                             }
                         }
                     }
-                    PageDots(pagerState.currentPage, Modifier.padding(top = 10.dp, bottom = 4.dp))
-                    Box(Modifier.weight(1f)) {
-                        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                            val apps = if (page == 0) state.infinitum else state.others
-                            val empty = if (state.loading) {
-                                "Reading apps."
-                            } else if (page == 0) {
-                                "The product catalog is empty."
-                            } else {
-                                "No other launchable apps."
-                            }
-                            AppGrid(
-                                apps = apps,
-                                state = if (page == 0) infinitumGrid else othersGrid,
-                                empty = empty,
-                                showPage = false,
-                                onOpen = { openApp(context, it) },
-                                onInfo = { openInfo(context, it) },
+                }
+            }
+            if (hits.askContacts || hits.contacts.isNotEmpty()) {
+                item(key = "contacts") {
+                    SectionHeader("Contacts")
+                    Card {
+                        if (hits.askContacts) {
+                            ResultRow(
+                                title = "Allow Contacts",
+                                detail = "Search names and numbers",
+                                icon = { Avatar("C") },
+                                onClick = onAllowContacts,
+                                chevron = true,
+                            )
+                        }
+                        hits.contacts.forEachIndexed { index, contact ->
+                            if (index > 0 || hits.askContacts) HairlineDivider()
+                            ContactRow(contact, onContact, onCall, onMessage)
+                        }
+                    }
+                }
+            }
+            if (hits.settings.isNotEmpty()) {
+                item(key = "settings") {
+                    SectionHeader("Settings")
+                    Card {
+                        hits.settings.forEachIndexed { index, setting ->
+                            if (index > 0) HairlineDivider()
+                            ResultRow(
+                                title = setting.title,
+                                icon = { MarkSquare { Letter(setting.title.take(1)) } },
+                                onClick = { onSetting(setting) },
+                                chevron = true,
+                            )
+                        }
+                    }
+                }
+            }
+            if (hits.files.isNotEmpty()) {
+                item(key = "files") {
+                    SectionHeader("Files")
+                    Card {
+                        hits.files.forEachIndexed { index, file ->
+                            if (index > 0) HairlineDivider()
+                            ResultRow(
+                                title = file.name,
+                                icon = { MarkSquare { Letter("F") } },
+                                onClick = { onFile(file) },
+                                chevron = true,
                             )
                         }
                     }
                 }
             }
         }
-        if (query.isEmpty() && !searchFocused && !imeVisible) FrostedCallDock(
-            messages = state.messages,
-            onCall = { openDialer(context) },
-            onCamera = { openCamera(context) },
-            onMessages = { message -> openMessages(context, message) },
-            modifier = Modifier.align(Alignment.BottomCenter),
-        )
     }
 }
 
 @Composable
-private fun AboutScreen(edition: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
+private fun SearchBox(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    requester: FocusRequester,
+    modifier: Modifier = Modifier,
+) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        textStyle = Brand.copy(fontSize = 17.sp, color = ThroneInk),
+        cursorBrush = SolidColor(ThroneInk),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+        modifier = modifier.focusRequester(requester),
+        decorationBox = { inner ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(FieldFill)
+                    .padding(horizontal = 10.dp),
+            ) {
+                MagnifierGlyph(ThroneMuted, 15.dp)
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .padding(start = 7.dp),
+                ) {
+                    if (value.isEmpty()) {
+                        Text("Search", style = Brand.copy(fontSize = 17.sp), color = ThroneMuted)
+                    }
+                    inner()
+                }
+                if (value.isNotEmpty()) {
+                    ClearGlyph(onClick = { onValueChange("") })
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun SectionHeader(text: String) {
+    Text(
+        text = text,
+        style = Brand.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold),
+        color = ThroneInk,
+        modifier = Modifier.padding(start = 4.dp, top = 12.dp, bottom = 6.dp),
+    )
+}
+
+@Composable
+private fun Card(content: @Composable () -> Unit) {
     Column(
-        modifier = modifier.padding(horizontal = 28.dp, vertical = 18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        Modifier
+            .fillMaxWidth()
+            .clip(CardShape)
+            .background(Color.White),
+    ) { content() }
+}
+
+@Composable
+private fun HairlineDivider(start: Dp = 60.dp) {
+    Box(
+        Modifier
+            .padding(start = start)
+            .fillMaxWidth()
+            .height(0.5.dp)
+            .background(Separator),
+    )
+}
+
+@Composable
+private fun ResultRow(
+    title: String,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+    detail: String? = null,
+    chevron: Boolean = false,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Image(
-            painter = painterResource(com.infinitum.throne.ui.R.drawable.infinitum_logo_stacked),
-            contentDescription = "Infinitum Corporation",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(168.dp),
-        )
-        Text(
-            "THRONE][OS™",
-            style = Brand.copy(fontWeight = FontWeight.Light, fontSize = 22.sp),
-            textAlign = TextAlign.Center,
-        )
-        Text(edition, style = Brand.copy(fontSize = 15.sp), color = ThroneMuted)
-        Text(
-            "Debug build. Not a certified release.",
-            style = Brand.copy(fontSize = 14.sp),
-            color = ThroneMuted,
-            textAlign = TextAlign.Center,
-        )
-        Text(
-            "No network. No widgets. No ads. No analytics.",
-            style = Brand.copy(fontSize = 13.sp),
-            color = ThroneMuted,
-            textAlign = TextAlign.Center,
-        )
-        Text(
-            text = "Back",
-            style = Brand.copy(fontSize = 16.sp),
-            color = ThroneInk,
-            modifier = Modifier
-                .padding(top = 8.dp)
-                .clickable(onClick = onBack)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        )
+        icon()
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(start = 14.dp),
+        ) {
+            Text(title, style = Brand.copy(fontSize = 17.sp), color = ThroneInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (detail != null) {
+                Text(detail, style = Brand.copy(fontSize = 13.sp), color = ThroneMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (chevron) ChevronGlyph()
     }
 }
+
+@Composable
+private fun ContactRow(
+    contact: ContactHit,
+    onOpen: (ContactHit) -> Unit,
+    onCall: (ContactHit) -> Unit,
+    onMessage: (ContactHit) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpen(contact) }
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Avatar(contact.name.take(1).uppercase())
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(start = 14.dp),
+        ) {
+            Text(contact.name, style = Brand.copy(fontSize = 17.sp), color = ThroneInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!contact.number.isNullOrBlank()) {
+                Text(contact.number, style = Brand.copy(fontSize = 13.sp), color = ThroneMuted, maxLines = 1)
+            }
+        }
+        if (!contact.number.isNullOrBlank()) {
+            RoundAction("Message", onClick = { onMessage(contact) }) { drawBubble(ThroneInk) }
+            Spacer(Modifier.width(10.dp))
+            RoundAction("Call", onClick = { onCall(contact) }) { drawHandset(ThroneInk) }
+        }
+    }
+}
+
+@Composable
+private fun RoundAction(label: String, onClick: () -> Unit, glyph: DrawScope.() -> Unit) {
+    Box(
+        Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(FieldFill)
+            .semantics { contentDescription = label }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(16.dp)) { glyph() }
+    }
+}
+
+/** Grey circle with an initial, the way a contact without a photo is shown. */
+@Composable
+private fun Avatar(letter: String) {
+    Box(
+        Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(Brush.verticalGradient(listOf(Color(0xFFA5A8B0), Color(0xFF85888F)))),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(letter, style = Brand.copy(fontSize = 16.sp, fontWeight = FontWeight.Medium), color = Color.White)
+    }
+}
+
+/** Small black squircle for non-app results (settings, files, VEIL). */
+@Composable
+private fun MarkSquare(content: @Composable () -> Unit) {
+    Box(
+        Modifier
+            .size(30.dp)
+            .clip(IconSquircle)
+            .background(ThroneInk),
+        contentAlignment = Alignment.Center,
+    ) { content() }
+}
+
+@Composable
+private fun Letter(text: String) {
+    Text(text, style = Brand.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold), color = Color.White)
+}
+
+@Composable
+private fun MagnifierGlyph(color: Color, size: Dp) {
+    Canvas(Modifier.size(size)) {
+        val stroke = this.size.minDimension * 0.13f
+        val r = this.size.minDimension * 0.34f
+        val c = Offset(this.size.width * 0.42f, this.size.height * 0.42f)
+        drawCircle(color, radius = r, center = c, style = Stroke(stroke))
+        val start = Offset(c.x + r * 0.72f, c.y + r * 0.72f)
+        drawLine(color, start, Offset(this.size.width * 0.94f, this.size.height * 0.94f), stroke, StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun ClearGlyph(onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(18.dp)
+            .clip(CircleShape)
+            .background(Color(0xFFAEAEB2))
+            .semantics { contentDescription = "Clear" }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(7.dp)) {
+            val w = 1.4.dp.toPx()
+            drawLine(Color.White, Offset.Zero, Offset(size.width, size.height), w, StrokeCap.Round)
+            drawLine(Color.White, Offset(size.width, 0f), Offset(0f, size.height), w, StrokeCap.Round)
+        }
+    }
+}
+
+@Composable
+private fun ChevronGlyph() {
+    Canvas(Modifier.size(width = 8.dp, height = 13.dp)) {
+        val w = 1.6.dp.toPx()
+        val color = Color(0xFFC4C4C7)
+        drawLine(color, Offset(1.dp.toPx(), 1.dp.toPx()), Offset(size.width - 1.dp.toPx(), size.height / 2f), w, StrokeCap.Round)
+        drawLine(color, Offset(size.width - 1.dp.toPx(), size.height / 2f), Offset(1.dp.toPx(), size.height - 1.dp.toPx()), w, StrokeCap.Round)
+    }
+}
+
+private fun DrawScope.drawHandset(color: Color) {
+    val stroke = Stroke(width = 1.6.dp.toPx())
+    drawRoundRect(
+        color = color,
+        topLeft = Offset(size.width * 0.28f, size.height * 0.06f),
+        size = Size(size.width * 0.44f, size.height * 0.88f),
+        cornerRadius = CornerRadius(3.5.dp.toPx(), 3.5.dp.toPx()),
+        style = stroke,
+    )
+    drawCircle(color, radius = 1.2.dp.toPx(), center = Offset(size.width / 2f, size.height * 0.78f))
+}
+
+private fun DrawScope.drawBubble(color: Color) {
+    drawRoundRect(
+        color = color,
+        topLeft = Offset(size.width * 0.06f, size.height * 0.08f),
+        size = Size(size.width * 0.88f, size.height * 0.64f),
+        cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx()),
+    )
+    val tail = androidx.compose.ui.graphics.Path().apply {
+        moveTo(size.width * 0.22f, size.height * 0.68f)
+        lineTo(size.width * 0.16f, size.height * 0.96f)
+        lineTo(size.width * 0.46f, size.height * 0.68f)
+        close()
+    }
+    drawPath(tail, color)
+}
+
+/* ---------- About (Settings-style) ---------- */
+
+@Composable
+private fun AboutScreen(edition: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
+    BackHandler(onBack = onBack)
+    LazyColumn(
+        modifier = modifier.background(GroupedBackground),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = DockReserve + 24.dp),
+    ) {
+        item {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .clickable(onClick = onBack)
+                    .padding(vertical = 8.dp),
+            ) {
+                Canvas(Modifier.size(width = 10.dp, height = 17.dp)) {
+                    val w = 2.2.dp.toPx()
+                    drawLine(ThroneInk, Offset(size.width - 1.dp.toPx(), 1.dp.toPx()), Offset(1.5.dp.toPx(), size.height / 2f), w, StrokeCap.Round)
+                    drawLine(ThroneInk, Offset(1.5.dp.toPx(), size.height / 2f), Offset(size.width - 1.dp.toPx(), size.height - 1.dp.toPx()), w, StrokeCap.Round)
+                }
+                Text("Home", style = Brand.copy(fontSize = 17.sp), color = ThroneInk, modifier = Modifier.padding(start = 6.dp))
+            }
+            Text(
+                "About",
+                style = Brand.copy(fontSize = 34.sp, fontWeight = FontWeight.Bold),
+                color = ThroneInk,
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 18.dp),
+            )
+            Card {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 22.dp, horizontal = 16.dp),
+                ) {
+                    Image(
+                        painter = painterResource(com.infinitum.throne.ui.R.drawable.infinitum_logo_stacked),
+                        contentDescription = "Infinitum Corporation",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(132.dp),
+                    )
+                    Text(
+                        "THRONE][OS™",
+                        style = Brand.copy(fontSize = 22.sp, fontWeight = FontWeight.Bold),
+                        color = ThroneInk,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                    Text(edition, style = Brand.copy(fontSize = 15.sp), color = ThroneMuted, modifier = Modifier.padding(top = 2.dp))
+                }
+            }
+            Spacer(Modifier.height(28.dp))
+            Card {
+                InfoRow("Name", "THRONE][OS™")
+                HairlineDivider(start = 16.dp)
+                InfoRow("Edition", edition)
+                HairlineDivider(start = 16.dp)
+                InfoRow("Build", "Debug")
+            }
+            Text(
+                "Debug build. Not a certified release.",
+                style = Brand.copy(fontSize = 13.sp),
+                color = ThroneMuted,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+            )
+            Spacer(Modifier.height(28.dp))
+            Card {
+                InfoRow("Network", "None")
+                HairlineDivider(start = 16.dp)
+                InfoRow("Widgets", "None")
+                HairlineDivider(start = 16.dp)
+                InfoRow("Ads", "None")
+                HairlineDivider(start = 16.dp)
+                InfoRow("Analytics", "None")
+            }
+            Text(
+                "No network. No widgets. No ads. No analytics.",
+                style = Brand.copy(fontSize = 13.sp),
+                color = ThroneMuted,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = Brand.copy(fontSize = 17.sp), color = ThroneInk, modifier = Modifier.weight(1f))
+        Text(value, style = Brand.copy(fontSize = 17.sp), color = ThroneMuted)
+    }
+}
+
+/* ---------- Dock (unchanged) ---------- */
 
 @Composable
 private fun FrostedCallDock(
@@ -453,384 +1184,7 @@ private fun CallButton(onClick: () -> Unit) {
     }
 }
 
-@Composable
-private fun SearchField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    onFocus: (Boolean) -> Unit,
-    onClear: () -> Unit,
-    onSearch: () -> Unit,
-) {
-    TextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = Modifier
-            .fillMaxWidth()
-            .onFocusChanged { onFocus(it.isFocused) },
-        placeholder = { Text("Search", color = ThroneMuted, style = Brand.copy(fontSize = 16.sp)) },
-        singleLine = true,
-        textStyle = Brand.copy(fontSize = 16.sp, color = ThroneInk),
-        shape = RoundedCornerShape(14.dp),
-        trailingIcon = {
-            if (value.isNotEmpty()) {
-                Text(
-                    "Clear",
-                    style = Brand.copy(fontSize = 13.sp),
-                    color = ThroneMuted,
-                    modifier = Modifier
-                        .padding(end = 8.dp)
-                        .clickable(onClick = onClear),
-                )
-            }
-        },
-        colors = TextFieldDefaults.colors(
-            focusedContainerColor = SearchFill,
-            unfocusedContainerColor = SearchFill,
-            disabledContainerColor = SearchFill,
-            focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent,
-            disabledIndicatorColor = Color.Transparent,
-            cursorColor = ThroneInk,
-            focusedTextColor = ThroneInk,
-            unfocusedTextColor = ThroneInk,
-        ),
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
-    )
-}
-
-@Composable
-private fun SearchResults(
-    query: String,
-    hits: SearchHits,
-    onApp: (AppEntry) -> Unit,
-    onVeil: () -> Unit,
-    onContact: (ContactHit) -> Unit,
-    onCall: (ContactHit) -> Unit,
-    onMessage: (ContactHit) -> Unit,
-    onSetting: (SettingHit) -> Unit,
-    onFile: (FileHit) -> Unit,
-    onAllowContacts: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        item(key = "veil") {
-            Text(
-                text = "Search with VEIL — \"$query\"",
-                style = Brand.copy(fontSize = 15.sp),
-                color = ThroneInk,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onVeil)
-                    .padding(vertical = 12.dp),
-            )
-        }
-        if (hits.apps.isNotEmpty()) {
-            item(key = "apps-label") { SectionLabel("Apps") }
-            items(hits.apps, key = { "app:${it.key}" }) { app ->
-                ResultRow(
-                    title = app.label,
-                    icon = {
-                        HydratedTile(
-                            productId = app.productId,
-                            fallback = app.icon,
-                            contentDescription = app.label,
-                            colorIcon = app.colorIcon,
-                            modifier = Modifier.size(40.dp),
-                        )
-                    },
-                    onClick = { onApp(app) },
-                )
-            }
-        }
-        if (hits.askContacts) {
-            item(key = "contacts-ask") {
-                ResultRow(
-                    title = "Contacts",
-                    detail = "Allow to search names and numbers",
-                    icon = { LetterMark("C") },
-                    onClick = onAllowContacts,
-                )
-            }
-        }
-        if (hits.contacts.isNotEmpty()) {
-            item(key = "contacts-label") { SectionLabel("Contacts") }
-            items(hits.contacts, key = { "contact:${it.id}" }) { contact ->
-                ContactRow(contact, onContact, onCall, onMessage)
-            }
-        }
-        if (hits.settings.isNotEmpty()) {
-            item(key = "settings-label") { SectionLabel("Settings") }
-            items(hits.settings, key = { "setting:${it.action}" }) { setting ->
-                ResultRow(
-                    title = setting.title,
-                    icon = { LetterMark(setting.title.take(1)) },
-                    onClick = { onSetting(setting) },
-                )
-            }
-        }
-        if (hits.files.isNotEmpty()) {
-            item(key = "files-label") { SectionLabel("Files") }
-            items(hits.files, key = { "file:${it.uri}" }) { file ->
-                ResultRow(
-                    title = file.name,
-                    icon = { LetterMark("F") },
-                    onClick = { onFile(file) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text = text,
-        style = Brand.copy(fontSize = 12.sp),
-        color = ThroneMuted,
-        modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
-    )
-}
-
-@Composable
-private fun ResultRow(
-    title: String,
-    onClick: () -> Unit,
-    icon: @Composable () -> Unit,
-    detail: String? = null,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        icon()
-        Column(Modifier.padding(start = 14.dp)) {
-            Text(title, style = Brand.copy(fontSize = 16.sp), color = ThroneInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (detail != null) {
-                Text(detail, style = Brand.copy(fontSize = 12.sp), color = ThroneMuted, maxLines = 1)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ContactRow(
-    contact: ContactHit,
-    onOpen: (ContactHit) -> Unit,
-    onCall: (ContactHit) -> Unit,
-    onMessage: (ContactHit) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onOpen(contact) }
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LetterMark(contact.name.take(1).uppercase())
-        Column(Modifier.weight(1f).padding(start = 14.dp)) {
-            Text(contact.name, style = Brand.copy(fontSize = 16.sp), color = ThroneInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!contact.number.isNullOrBlank()) {
-                Text(contact.number, style = Brand.copy(fontSize = 12.sp), color = ThroneMuted, maxLines = 1)
-            }
-        }
-        if (!contact.number.isNullOrBlank()) {
-            Text(
-                "Call",
-                style = Brand.copy(fontSize = 13.sp),
-                color = ThroneInk,
-                modifier = Modifier
-                    .clickable { onCall(contact) }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-            )
-            Text(
-                "Message",
-                style = Brand.copy(fontSize = 13.sp),
-                color = ThroneInk,
-                modifier = Modifier
-                    .clickable { onMessage(contact) }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun LetterMark(letter: String) {
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(RoundedCornerShape(22))
-            .background(Color.White)
-            .border(0.75.dp, Color.Black.copy(alpha = 0.07f), RoundedCornerShape(22)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(letter, style = Brand.copy(fontWeight = FontWeight.Medium, fontSize = 16.sp), color = ThroneInk)
-    }
-}
-
-@Composable
-private fun PageTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    val color by animateColorAsState(
-        targetValue = if (selected) ThroneInk else ThroneMuted,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "page-tab",
-    )
-    Text(
-        text = label,
-        style = Brand.copy(fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal, fontSize = 13.sp),
-        color = color,
-        modifier = Modifier
-            .pointerInput(label) { detectTapGestures(onTap = { onClick() }) }
-            .padding(vertical = 6.dp),
-    )
-}
-
-@Composable
-private fun PageDots(page: Int, modifier: Modifier = Modifier) {
-    Row(
-        modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        repeat(2) { index ->
-            val selected = page == index
-            Box(
-                Modifier
-                    .padding(horizontal = 3.dp)
-                    .size(if (selected) 7.dp else 5.dp)
-                    .background(if (selected) ThroneInk else Color(0xFFD5D5D8), CircleShape),
-            )
-        }
-    }
-}
-
-@Composable
-private fun AppGrid(
-    apps: List<AppEntry>,
-    state: LazyGridState,
-    empty: String,
-    showPage: Boolean,
-    onOpen: (AppEntry) -> Unit,
-    onInfo: (AppEntry) -> Unit,
-    interactive: Boolean = true,
-    modifier: Modifier = Modifier,
-) {
-    val mirror = rememberLazyGridState()
-    val gridState = if (interactive) state else mirror
-    if (!interactive) {
-        LaunchedEffect(state) {
-            androidx.compose.runtime.snapshotFlow {
-                state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset
-            }.distinctUntilChanged().collect { (index, offset) ->
-                gridState.scrollToItem(index, offset)
-            }
-        }
-    }
-    if (apps.isEmpty()) {
-        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            if (empty.isNotEmpty()) {
-                Text(
-                    empty,
-                    style = Brand.copy(fontSize = 15.sp),
-                    color = ThroneMuted,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-        return
-    }
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(4),
-        state = gridState,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 128.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalArrangement = Arrangement.spacedBy(22.dp),
-    ) {
-        items(apps, key = { it.key }) { app ->
-            AppTile(app, showPage, interactive, onOpen, onInfo)
-        }
-    }
-}
-
-@Composable
-private fun AppTile(
-    app: AppEntry,
-    showPage: Boolean,
-    interactive: Boolean,
-    onOpen: (AppEntry) -> Unit,
-    onInfo: (AppEntry) -> Unit,
-) {
-    val scale = remember(app.key) { Animatable(1f) }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer {
-                scaleX = scale.value
-                scaleY = scale.value
-                clip = false
-            }
-            .then(
-                if (!interactive) {
-                    Modifier
-                } else {
-                    Modifier.pointerInput(app.key) {
-                        detectTapGestures(
-                            onPress = {
-                                scale.animateTo(0.9f, spring(dampingRatio = 0.7f, stiffness = 700f))
-                                tryAwaitRelease()
-                                scale.animateTo(
-                                    1f,
-                                    spring(
-                                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                                        stiffness = Spring.StiffnessMedium,
-                                    ),
-                                )
-                            },
-                            onTap = { onOpen(app) },
-                            onLongPress = { onInfo(app) },
-                        )
-                    }
-                },
-            ),
-    ) {
-        HydratedTile(
-            productId = app.productId,
-            fallback = app.icon,
-            contentDescription = app.label,
-            colorIcon = app.colorIcon,
-            modifier = Modifier.size(TileSize),
-        )
-        Text(
-            text = app.label,
-            style = Brand.copy(fontSize = 11.sp),
-            color = ThroneInk,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .padding(top = 6.dp)
-                .fillMaxWidth(),
-        )
-        if (showPage) {
-            Text(
-                text = if (app.page == HomePage.INFINITUM) "INFINITUM" else "OTHERS",
-                style = Brand.copy(fontSize = 10.sp),
-                color = ThroneMuted,
-                maxLines = 1,
-            )
-        }
-    }
-}
+/* ---------- Launching (unchanged) ---------- */
 
 private fun openCamera(context: android.content.Context) {
     val still = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
