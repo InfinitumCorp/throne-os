@@ -5,16 +5,27 @@ import kotlin.math.ln
 
 object PasswordGenerator {
     private val random = SecureRandom()
-    private val words = listOf(
-        "able", "anchor", "apple", "arrow", "autumn", "baker", "beach", "birch", "bloom", "bridge",
-        "cabin", "cedar", "cinder", "cloud", "coral", "crane", "daisy", "delta", "ember", "falcon",
-        "field", "flint", "frost", "garden", "harbor", "hazel", "heron", "honey", "ivory", "jasper",
-        "kettle", "lantern", "maple", "meadow", "north", "olive", "orchid", "otter", "pebble", "pine",
-        "quartz", "raven", "river", "sail", "spruce", "stone", "summit", "thistle", "timber", "violet",
-        "willow", "winter", "amber", "basin", "canyon", "cliff", "comet", "dawn", "dune", "eagle",
-        "fern", "glade", "grove", "inlet", "island", "lagoon", "lark", "marble", "moss", "nest",
-        "oak", "pearl", "ridge", "robin", "sable", "shore", "silk", "silver", "sparrow", "tide",
+    /** 256 distinct words: each word adds exactly 8 bits. */
+    internal val words = listOf(
+        "able", "acid", "acorn", "actor", "agent", "alarm", "album", "alley", "amber", "angle", "ankle", "apple", "apron", "arch", "arena", "arrow",
+        "aspen", "atlas", "attic", "audio", "autumn", "award", "bacon", "badge", "bagel", "baker", "bamboo", "banjo", "barn", "basin", "basket", "beach",
+        "beam", "bean", "bear", "beaver", "bell", "belt", "bench", "berry", "bike", "birch", "bison", "blade", "blank", "blaze", "bloom", "board",
+        "boat", "bolt", "bone", "book", "boot", "bottle", "brain", "branch", "brass", "bread", "brick", "bridge", "brook", "broom", "brush", "bucket",
+        "buffalo", "bugle", "cabin", "cable", "cactus", "camel", "camera", "candle", "canoe", "canyon", "carbon", "carpet", "carrot", "castle", "cedar", "cello",
+        "chain", "chalk", "chart", "cheese", "cherry", "chess", "chimney", "cider", "cinder", "circle", "citrus", "clay", "cliff", "clock", "cloud", "clover",
+        "coast", "cobalt", "cocoa", "comet", "copper", "coral", "cotton", "cougar", "crane", "crayon", "creek", "cricket", "crown", "crystal", "cube", "cushion",
+        "daisy", "dawn", "delta", "desert", "diamond", "dingo", "dolphin", "donkey", "dragon", "drum", "dune", "eagle", "easel", "echo", "eclipse", "ember",
+        "engine", "falcon", "fern", "ferry", "fiddle", "field", "fig", "flag", "flame", "flint", "flute", "fog", "forest", "fossil", "fox", "frost",
+        "galaxy", "garden", "garlic", "gecko", "geyser", "ginger", "glacier", "glade", "globe", "glove", "goat", "gold", "gourd", "granite", "grape", "gravel",
+        "grove", "guitar", "gull", "hammer", "harbor", "harp", "hawk", "hazel", "helmet", "heron", "hill", "honey", "hornet", "horse", "husky", "iceberg",
+        "igloo", "inlet", "iris", "iron", "island", "ivory", "jacket", "jade", "jaguar", "jasper", "jelly", "jewel", "jungle", "kayak", "kettle", "kiwi",
+        "koala", "ladder", "lagoon", "lake", "lamp", "lantern", "lark", "lava", "lemon", "lens", "lily", "lime", "linen", "lion", "lizard", "llama",
+        "lobster", "locket", "lotus", "lunar", "magnet", "mango", "maple", "marble", "market", "meadow", "melon", "meteor", "mint", "mirror", "mitten", "moose",
+        "mosaic", "moss", "moth", "mountain", "mule", "museum", "needle", "nest", "nickel", "noodle", "north", "oak", "oasis", "ocean", "olive", "onion",
+        "opal", "orbit", "orchid", "otter", "owl", "oyster", "paddle", "palm", "panda", "paper", "parrot", "peach", "pearl", "pebble", "pecan", "pelican",
     )
+
+    const val PASSPHRASE_WORDS: Int = 8
     private val common = setOf(
         "password", "123456", "12345678", "qwerty", "letmein", "admin", "welcome", "iloveyou",
         "monkey", "dragon", "master", "login", "abc123", "trustno1", "passw0rd",
@@ -41,8 +52,9 @@ object PasswordGenerator {
         return String(out)
     }
 
-    fun passphrase(wordsCount: Int = 6, separator: String = "-"): String {
-        val count = wordsCount.coerceIn(3, 12)
+    /** Default 8 words from 256: 64 bits. Never fewer than 6 words (48 bits). */
+    fun passphrase(wordsCount: Int = PASSPHRASE_WORDS, separator: String = "-"): String {
+        val count = wordsCount.coerceIn(6, 16)
         return (1..count).joinToString(separator) { words[random.nextInt(words.size)] }
     }
 

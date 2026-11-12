@@ -392,7 +392,7 @@ private fun TotpScreen(onBack: () -> Unit, onCopy: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         doc?.entries?.filter { it.totp.startsWith("otpauth://") }?.forEach { entry ->
             val spec = runCatching { Totp.parseOtpAuth(entry.totp) }.getOrNull()
-            val code = spec?.let { Totp.code(it.secret, now, it.period, it.digits, it.algorithm) } ?: "------"
+            val code = spec?.let { runCatching { Totp.code(it.secret, now, it.period, it.digits, it.algorithm) }.getOrNull() } ?: "------"
             Text("${entry.title}  $code  ${Totp.remainingSeconds(now)}s", color = ThroneInk, modifier = Modifier.clickable { onCopy(code) })
         }
         ThroneButton("Back", onBack)
