@@ -3,4 +3,6 @@
     <string name="app_name">Nether</string>
     <string name="autofill_unlock">Unlock Nether</string>
     <string name="autofill_fill">Fill from Nether</string>
+    <string name="autofill_save_locked">Nether is locked. Unlock Nether, then save the login there.</string>
+    <string name="autofill_save_failed">Nether could not save this login.</string>
 </resources>

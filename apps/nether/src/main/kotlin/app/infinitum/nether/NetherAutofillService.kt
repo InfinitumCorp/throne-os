@@ -11,13 +11,18 @@ import android.service.autofill.FillCallback
 import android.service.autofill.FillRequest
 import android.service.autofill.FillResponse
 import android.service.autofill.SaveCallback
+import android.service.autofill.SaveInfo
 import android.service.autofill.SaveRequest
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
 import android.widget.RemoteViews
 import app.infinitum.nether.core.AutofillMatch
+import app.infinitum.nether.core.AutofillSave
 import app.infinitum.nether.core.NetherEntry
+import app.infinitum.nether.core.NetherVault
 import app.infinitum.nether.ui.NetherSession
+import app.infinitum.nether.ui.SharedVault
+import app.infinitum.nether.ui.VaultFiles
 
 class NetherAutofillService : AutofillService() {
     override fun onFillRequest(request: FillRequest, cancellationSignal: CancellationSignal, callback: FillCallback) {
@@ -56,7 +61,37 @@ class NetherAutofillService : AutofillService() {
     }
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
-        callback.onSuccess()
+        val structure = request.fillContexts.lastOrNull()?.structure
+        val key = NetherSession.key
+        val document = NetherSession.document
+        if (structure == null || key == null || document == null) {
+            callback.onFailure(getString(R.string.autofill_save_locked))
+            return
+        }
+        val fields = collect(structure)
+        val password = fields.firstOrNull { it.kind == Kind.PASSWORD && !it.value.isNullOrEmpty() }?.value.orEmpty()
+        val username = fields.firstOrNull { it.kind == Kind.USERNAME && !it.value.isNullOrEmpty() }?.value.orEmpty()
+        val domain = fields.firstNotNullOfOrNull { it.webDomain }
+        val app = structure.activityComponent?.packageName
+        val updated = AutofillSave.apply(document, domain, app, username, password)
+        if (updated == null) {
+            callback.onSuccess()
+            return
+        }
+        val store = SharedVault.forNether(this)
+        val name = if (NetherSession.decoy) VaultFiles.DECOY else VaultFiles.PRIMARY
+        val blob = store.read(name)
+        if (blob == null) {
+            callback.onFailure(getString(R.string.autofill_save_failed))
+            return
+        }
+        try {
+            store.write(name, NetherVault.save(key, blob, updated))
+            NetherSession.document = updated
+            callback.onSuccess()
+        } catch (_: Exception) {
+            callback.onFailure(getString(R.string.autofill_save_failed))
+        }
     }
 
     companion object {
@@ -72,7 +107,6 @@ class NetherAutofillService : AutofillService() {
             val matches = document.entries.filter { entry ->
                 entry.secret.isNotEmpty() && AutofillMatch.matches(entry.url, domain, app)
             }.take(8)
-            if (matches.isEmpty()) return null
             val builder = FillResponse.Builder()
             var added = 0
             for (entry in matches) {
@@ -81,7 +115,24 @@ class NetherAutofillService : AutofillService() {
                     added++
                 }
             }
-            return if (added == 0) null else builder.build()
+            val save = saveInfo(fields)
+            if (save != null) builder.setSaveInfo(save)
+            return if (added == 0 && save == null) null else builder.build()
+        }
+
+        /** Asks Android to offer "Save to Nether" when a password field is submitted. */
+        private fun saveInfo(fields: List<Field>): SaveInfo? {
+            val passwords = fields.filter { it.kind == Kind.PASSWORD }.map { it.id }
+            if (passwords.isEmpty()) return null
+            val usernames = fields.filter { it.kind == Kind.USERNAME }.map { it.id }
+            val type = if (usernames.isEmpty()) {
+                SaveInfo.SAVE_DATA_TYPE_PASSWORD
+            } else {
+                SaveInfo.SAVE_DATA_TYPE_PASSWORD or SaveInfo.SAVE_DATA_TYPE_USERNAME
+            }
+            val builder = SaveInfo.Builder(type, passwords.toTypedArray())
+            if (usernames.isNotEmpty()) builder.setOptionalIds(usernames.toTypedArray())
+            return builder.build()
         }
 
         private fun dataset(context: android.content.Context, entry: NetherEntry, fields: List<Field>): Dataset? {
@@ -120,7 +171,8 @@ class NetherAutofillService : AutofillService() {
             val id = node.autofillId
             val kind = kindOf(node)
             if (id != null && kind != null) {
-                out += Field(id, kind, domain)
+                val value = node.autofillValue?.takeIf { it.isText }?.textValue?.toString() ?: node.text?.toString()
+                out += Field(id, kind, domain, value)
             }
             for (i in 0 until node.childCount) walk(node.getChildAt(i), domain, out)
         }
@@ -142,4 +194,4 @@ class NetherAutofillService : AutofillService() {
 
 private enum class Kind { USERNAME, PASSWORD }
 
-private data class Field(val id: AutofillId, val kind: Kind, val webDomain: String?)
+private data class Field(val id: AutofillId, val kind: Kind, val webDomain: String?, val value: String? = null)
