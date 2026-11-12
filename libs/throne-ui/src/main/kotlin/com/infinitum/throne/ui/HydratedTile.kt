@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -41,7 +42,12 @@ fun HydratedTile(
     fallback: ImageBitmap? = null,
     contentDescription: String? = null,
     colorIcon: Boolean = false,
+    flat: Boolean = false,
 ) {
+    if (flat) {
+        FlatTile(productId, modifier, fallback, contentDescription, colorIcon)
+        return
+    }
     val context = LocalContext.current
     val mark = remember(productId) {
         if (colorIcon) {
@@ -78,6 +84,56 @@ fun HydratedTile(
                 contentDescription = contentDescription,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(0.55f),
+            )
+        }
+    }
+}
+
+/**
+ * Home-screen tile: white continuous-corner squircle, hairline edge and a soft
+ * low shadow, no gloss. The mark is chosen exactly as HydratedTile chooses it.
+ */
+@Composable
+private fun FlatTile(
+    productId: String?,
+    modifier: Modifier,
+    fallback: ImageBitmap?,
+    contentDescription: String?,
+    colorIcon: Boolean,
+) {
+    val context = LocalContext.current
+    val mark = remember(productId) {
+        if (colorIcon) {
+            null
+        } else {
+            productId?.let { ProductMarks.bitmap(context, it, 512) }?.let(::cropToInk)
+        }
+    }
+    val glyph = when {
+        colorIcon -> fallback
+        mark != null -> mark
+        else -> fallback?.let(::cropToInk)
+    }
+    Box(
+        modifier = modifier
+            .shadow(
+                elevation = 3.dp,
+                shape = IconSquircle,
+                ambientColor = Color.Black.copy(alpha = 0.18f),
+                spotColor = Color.Black.copy(alpha = 0.22f),
+            )
+            .clip(IconSquircle)
+            .background(Color.White)
+            .border(0.6.dp, Color.Black.copy(alpha = 0.06f), IconSquircle),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (glyph != null) {
+            Image(
+                bitmap = glyph,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Fit,
+                // Adaptive foregrounds carry their own safe-zone padding, so they fill the tile.
+                modifier = Modifier.fillMaxSize(if (colorIcon) 1f else 0.55f),
             )
         }
     }
