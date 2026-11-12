@@ -67,7 +67,7 @@ object Importers {
      */
     fun throneVaultNote(text: String): String? {
         if (text.contains("THRONEVAULT1.")) {
-            return "This is a locked Throne Vault message. Nether does not read Vault's private files. Paste a decrypted CSV export."
+            return "This is a locked THRONE][OS™ encrypted message. Nether does not read those private files. Paste a decrypted CSV export."
         }
         return null
     }

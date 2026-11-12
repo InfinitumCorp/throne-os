@@ -145,15 +145,6 @@
       "edition": "all"
     },
     {
-      "id": "zerkalo",
-      "name": "Zerkalo",
-      "summary": "No public site was found.",
-      "url": null,
-      "packages": [],
-      "cumulusId": false,
-      "edition": "all"
-    },
-    {
       "id": "flower",
       "name": "Flower™",
       "summary": "Launch and recovery for POLLEN. No Android package was published.",

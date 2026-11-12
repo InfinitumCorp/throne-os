@@ -42,7 +42,6 @@ Checked on 10 Nov 2026. Sibling InfinitumCorp repositories were not readable fro
 | VEIL browser | both | web shell | `app.infinitum.veil.browser` | https://infinitumveil.app |
 | ei·det·ic™ | both | web shell | `com.infinitum.eidetic.cam` | https://infinitumcorporation.ai/products/eidetic |
 | [HRVST] | both | web shell | `com.infinitum.hrvst.cam` | https://infinitumcorporation.ai/products/hrvst |
-| Zerkalo | both | placeholder | none | Coming soon. No public page was found. |
 | Flower | both | web shell | none | https://infinitumcorporation.ai/products/flower |
 | POLLEN | both | web shell | none | https://infinitumcorporation.ai/products/pollen |
 | Infinitum Academy | both | web shell | none | https://infinitum-academy.whop.site |

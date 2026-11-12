@@ -257,12 +257,12 @@ object AuditEngine {
 
     private fun messagingVault(): Finding = finding(
         "msg_vault",
-        "Encrypted vault",
+        "Encrypted messages (Nether)",
         FindingStatus.NOTE,
-        "THRONE][OS™ Vault encrypts a message on this phone and hands the ciphertext to Messages as ordinary text. " +
+        "THRONE][OS™ Nether encrypts a message on this phone and hands the ciphertext to Messages as ordinary text. " +
             "That does not change Google Messages and it is not RCS. " +
             "Compare X25519 safety numbers in person. A key that arrived by SMS can be replaced in transit.",
-        "Open Vault",
+        "Open Nether",
         "vault",
     )
 

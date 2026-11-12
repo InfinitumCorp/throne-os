@@ -357,7 +357,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val SHORT_LABELS = mapOf(
             "com.infinitum.throne.launcher" to "THRONE",
             "com.infinitum.throne.guard" to "Guard",
-            "com.infinitum.throne.vault" to "Vault",
+            "com.infinitum.throne.vault" to "Nether",
             "app.infinitum.nether" to "Nether",
             "com.infinitum.throne.suite" to "Suite",
             "com.infinitum.eidetic.cam" to "EIDETIC",

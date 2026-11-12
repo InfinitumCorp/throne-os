@@ -62,7 +62,7 @@ fun VaultApp(viewModel: VaultViewModel) {
 
 @Composable
 private fun Home(viewModel: VaultViewModel) {
-    Wordmark(edition = viewModel.edition.label, kicker = "Vault")
+    Wordmark(edition = viewModel.edition.label, kicker = "Nether")
     Text(
         "This does not change Google Messages. It encrypts text on this phone. Messages only receives ciphertext. Plain SMS and MMS stay unencrypted if you type them in Messages.",
         style = MaterialTheme.typography.bodyMedium,
