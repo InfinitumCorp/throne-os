@@ -5,7 +5,7 @@
 - Work on branch `cursor/throne-km4-layer-9d8d` (PR #1, titled "Throne OS. ^KETER"). Keep that PR title.
 - Pull before you start so you're current with the cloud agents also pushing here.
 - Never force-push or rewrite pushed history. Never merge a PR without William's explicit OK.
-- Never commit secrets (keys, passwords, tokens, .env files). The shared debug keystore in `keystore/` is intentional.
+- Never commit secrets (keys, passwords, tokens, .env files, keystores). The ^KETER signing key lives outside the repo; builds read it from `throne.keystore*` / `throne.key.*` in `~/.gradle/gradle.properties` (see docs/KM4-LAYER.md). Never add a keystore or its password to this repo, which is public.
 
 ## Product notes
 - Editions: ^KETER (William's, shown as ^KETERv1) and ARCH//ANGEL (public). ^KETER and MIL apps stay off public sites.

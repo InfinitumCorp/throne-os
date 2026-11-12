@@ -7,7 +7,7 @@ local.properties
 *.dex
 *.keystore
 *.jks
-!keystore/throne-debug.keystore
+*.p12
 *.iml
 .idea/
 captures/
