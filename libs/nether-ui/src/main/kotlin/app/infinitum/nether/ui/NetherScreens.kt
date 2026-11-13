@@ -26,12 +26,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -51,6 +54,7 @@ import com.infinitum.throne.ui.ThronePaper
 import com.infinitum.throne.ui.throneFieldColors
 import org.json.JSONObject
 import java.util.Base64
+import kotlinx.coroutines.delay
 
 private enum class Screen { LOCK, CREATE, LIST, EDIT, GENERATE, TOTP, HEALTH, SETTINGS }
 
@@ -69,8 +73,9 @@ fun NetherRoot(store: NetherStore) {
         )
     }
     var message by remember { mutableStateOf("") }
-    var query by remember { mutableStateOf("") }
-    var editing by remember { mutableStateOf(NetherEntry()) }
+    // Keyed to the session, so a half-edited entry (and its password) is dropped when the vault locks.
+    var query by remember(generation) { mutableStateOf("") }
+    var editing by remember(generation) { mutableStateOf(NetherEntry()) }
     var favoritesOnly by remember { mutableStateOf(false) }
     val meta = remember { Meta(store, context.packageName) }
     var checking by remember { mutableStateOf(false) }
@@ -200,7 +205,9 @@ fun NetherRoot(store: NetherStore) {
                 onToggleFavorites = { favoritesOnly = !favoritesOnly },
                 onOpen = { editing = it; screen = Screen.EDIT },
                 onAdd = { editing = NetherEntry(); screen = Screen.EDIT },
-                onGenerate = { screen = Screen.GENERATE },
+                // From the list, a generated password starts a new entry. It never lands in
+                // whichever entry happened to be opened last.
+                onGenerate = { editing = NetherEntry(); screen = Screen.GENERATE },
                 onTotp = { screen = Screen.TOTP },
                 onHealth = { screen = Screen.HEALTH },
                 onSettings = { screen = Screen.SETTINGS },
@@ -214,6 +221,12 @@ fun NetherRoot(store: NetherStore) {
                 },
                 onScan = {
                     scan.launch(Intent(context, QrScanActivity::class.java))
+                },
+                onGenerate = { screen = Screen.GENERATE },
+                onDelete = {
+                    deleteEntry(store, editing.id)
+                    editing = NetherEntry()
+                    screen = Screen.LIST
                 },
                 onBack = { screen = Screen.LIST },
             )
@@ -239,6 +252,17 @@ fun NetherRoot(store: NetherStore) {
 
 private fun VaultDocumentFrom(key: ByteArray, blob: ByteArray): app.infinitum.nether.core.VaultDocument {
     return app.infinitum.nether.core.VaultDocument.fromJson(app.infinitum.nether.core.NetherCipher.open(key, blob))
+}
+
+private fun deleteEntry(store: NetherStore, id: String) {
+    val key = NetherSession.key ?: return
+    val current = NetherSession.document ?: return
+    if (current.entries.none { it.id == id }) return
+    val document = current.copy(entries = current.entries.filterNot { it.id == id })
+    val name = if (NetherSession.decoy) VaultFiles.DECOY else VaultFiles.PRIMARY
+    val blob = store.read(name) ?: return
+    store.write(name, NetherVault.save(key, blob, document))
+    NetherSession.document = document
 }
 
 private fun saveEntry(store: NetherStore, entry: NetherEntry) {
@@ -347,8 +371,18 @@ private fun EntryList(
 }
 
 @Composable
-private fun Editor(entry: NetherEntry, onChange: (NetherEntry) -> Unit, onSave: () -> Unit, onScan: () -> Unit, onBack: () -> Unit) {
+private fun Editor(
+    entry: NetherEntry,
+    onChange: (NetherEntry) -> Unit,
+    onSave: () -> Unit,
+    onScan: () -> Unit,
+    onGenerate: () -> Unit,
+    onDelete: () -> Unit,
+    onBack: () -> Unit,
+) {
     val context = LocalContext.current
+    var confirmDelete by remember(entry.id) { mutableStateOf(false) }
+    val saved = NetherSession.document?.entries?.any { it.id == entry.id } == true
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Field("Title", entry.title) { onChange(entry.copy(title = it)) }
         Field("Type ${entry.type}", entry.type) { onChange(entry.copy(type = it)) }
@@ -357,8 +391,8 @@ private fun Editor(entry: NetherEntry, onChange: (NetherEntry) -> Unit, onSave: 
         Field("URL", entry.url) { onChange(entry.copy(url = it)) }
         Field("Folder", entry.folder) { onChange(entry.copy(folder = it)) }
         Field("Tags", entry.tags.joinToString(",")) { onChange(entry.copy(tags = it.split(',').map { tag -> tag.trim() }.filter { tag -> tag.isNotEmpty() })) }
-        Field("Notes", entry.notes) { onChange(entry.copy(notes = it)) }
-        Field("otpauth", entry.totp) { onChange(entry.copy(totp = it)) }
+        Field("Notes", entry.notes, sensitive = true) { onChange(entry.copy(notes = it)) }
+        Field("otpauth", entry.totp, sensitive = true) { onChange(entry.copy(totp = it)) }
         Text("Strength ${PasswordGenerator.strength(entry.secret)} / 4", color = ThroneMuted)
         if (entry.history.isNotEmpty()) Text("History ${entry.history.size}", color = ThroneMuted)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -366,6 +400,14 @@ private fun Editor(entry: NetherEntry, onChange: (NetherEntry) -> Unit, onSave: 
             ThroneButton("Scan", onScan)
             ThroneButton("Copy", { NetherClipboard.copy(context, entry.secret) })
             ThroneButton("Back", onBack)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ThroneButton("Generate", onGenerate)
+            if (saved) {
+                ThroneButton(if (confirmDelete) "Tap again to delete" else "Delete", {
+                    if (confirmDelete) onDelete() else confirmDelete = true
+                })
+            }
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -393,12 +435,18 @@ private fun GeneratorScreen(onUse: (String) -> Unit, onBack: () -> Unit) {
 @Composable
 private fun TotpScreen(onBack: () -> Unit, onCopy: (String) -> Unit) {
     val doc = NetherSession.document
-    val now = System.currentTimeMillis()
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000 - System.currentTimeMillis() % 1000)
+            now = System.currentTimeMillis()
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         doc?.entries?.filter { it.totp.startsWith("otpauth://") }?.forEach { entry ->
             val spec = runCatching { Totp.parseOtpAuth(entry.totp) }.getOrNull()
             val code = spec?.let { runCatching { Totp.code(it.secret, now, it.period, it.digits, it.algorithm) }.getOrNull() } ?: "------"
-            Text("${entry.title}  $code  ${Totp.remainingSeconds(now)}s", color = ThroneInk, modifier = Modifier.clickable { onCopy(code) })
+            Text("${entry.title}  $code  ${spec?.let { Totp.remainingSeconds(now, it.period) } ?: 0}s", color = ThroneInk, modifier = Modifier.clickable { onCopy(code) })
         }
         ThroneButton("Back", onBack)
     }
@@ -464,7 +512,7 @@ private fun SettingsScreen(
         Text("Back up: saves the encrypted vault as a file you choose. Keep a copy off this phone.", color = ThroneMuted)
         ThroneButton("Back up vault", { backup.launch(NetherVault.backupName(System.currentTimeMillis())) })
         if (backupStatus.isNotEmpty()) Text(backupStatus, color = ThroneMuted)
-        Field("Import CSV or otpauth", pasted) { pasted = it }
+        Field("Import CSV or otpauth", pasted, sensitive = true) { pasted = it }
         ThroneButton("Import", {
             val note = Importers.throneVaultNote(pasted)
             if (note != null) return@ThroneButton
@@ -481,6 +529,7 @@ private fun SettingsScreen(
                 store.write(if (NetherSession.decoy) VaultFiles.DECOY else VaultFiles.PRIMARY, NetherVault.save(key, blob, document))
                 NetherSession.document = document
             }
+            pasted = ""
         })
         ThroneButton("Lock", onLock)
         ThroneButton("Back", onBack)
@@ -489,9 +538,20 @@ private fun SettingsScreen(
 }
 
 @Composable
-private fun Field(label: String, value: String, onChange: (String) -> Unit) {
-    OutlinedTextField(value, onChange, modifier = Modifier.fillMaxWidth(), label = { Text(label) }, colors = throneFieldColors(), singleLine = true)
+private fun Field(label: String, value: String, sensitive: Boolean = false, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value,
+        onChange,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        // Password input type: keyboards don't learn, suggest or sync what is typed here.
+        keyboardOptions = if (sensitive) SecretKeyboard else KeyboardOptions.Default,
+        colors = throneFieldColors(),
+        singleLine = true,
+    )
 }
+
+private val SecretKeyboard = KeyboardOptions(keyboardType = KeyboardType.Password)
 
 @Composable
 private fun SecretField(label: String, value: String, onChange: (String) -> Unit) {
@@ -501,7 +561,7 @@ private fun SecretField(label: String, value: String, onChange: (String) -> Unit
         modifier = Modifier.fillMaxWidth(),
         label = { Text(label) },
         visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions.Default,
+        keyboardOptions = SecretKeyboard,
         colors = throneFieldColors(),
         singleLine = true,
     )
