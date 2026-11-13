@@ -151,7 +151,7 @@ function Install-One {
 Install failed for $Label.
 $($result.Text)
 If this is a signature mismatch, this script will not remove the installed package.
-Debug builds share keystore/throne-debug.keystore. An older CI build used a different debug key.
+^KETER builds are signed with the private key named in ~/.gradle/gradle.properties (throne.keystore). A copy signed with another key (CI, an older build) cannot be replaced in place.
 Android will not replace that copy. Vault is left installed. Do not uninstall it from this script.
 "@
     }

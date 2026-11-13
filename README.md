@@ -46,6 +46,6 @@ Eidetic (`com.infinitum.eidetic.cam`) captures a frame only for an enrolled pers
 
 ## Nether
 
-Nether is the offline password vault for this phone. The standalone app is `app.infinitum.nether`. Cumulus://Suite opens the same vault from its Nether section. Crypto, storage, the generator, TOTP, and the screens live in `libs/nether-core` and `libs/nether-ui`. The vault file is AES-256-GCM. The key comes from Argon2id (Bouncy Castle). A copy of the key can be wrapped by the Android Keystore, StrongBox when the phone has it, and unlocked with BiometricPrompt. Nether has no INTERNET permission. Vault (`com.infinitum.throne.vault`) stays installed; the launcher hides it and puts Nether in that grid slot. Nether does not read Vault's private files.
+Nether is the offline password vault for this phone. The standalone app is `app.infinitum.nether`. Cumulus://Suite's Nether section opens the Nether app; Suite has INTERNET for its web shelves, so it never decrypts the vault itself. Nether exports no vault provider. Crypto, storage, the generator, TOTP, and the screens live in `libs/nether-core` and `libs/nether-ui`. The vault file is AES-256-GCM. The key comes from Argon2id (Bouncy Castle). A copy of the key can be wrapped by the Android Keystore, StrongBox when the phone has it, and unlocked with BiometricPrompt. Nether has no INTERNET permission. Vault (`com.infinitum.throne.vault`) stays installed; the launcher hides it and puts Nether in that grid slot. Nether does not read Vault's private files.
 
 Site: https://infinitumcorporation.ai/

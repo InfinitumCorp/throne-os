@@ -6,6 +6,11 @@ import javax.crypto.spec.SecretKeySpec
 import kotlin.math.pow
 
 object Totp {
+    const val MIN_DIGITS = 6
+    const val MAX_DIGITS = 8
+    const val MIN_PERIOD = 1
+    const val MAX_PERIOD = 300
+
     fun code(
         secret: ByteArray,
         timeMillis: Long,
@@ -13,6 +18,9 @@ object Totp {
         digits: Int = 6,
         algorithm: String = "HmacSHA1",
     ): String {
+        require(secret.isNotEmpty()) { "Missing secret." }
+        require(digits in MIN_DIGITS..MAX_DIGITS) { "Code length must be 6 to 8 digits." }
+        require(periodSeconds in MIN_PERIOD..MAX_PERIOD) { "Code period must be 1 to 300 seconds." }
         val counter = timeMillis / 1000 / periodSeconds
         val message = ByteArray(8)
         var value = counter
@@ -40,6 +48,7 @@ object Totp {
     fun parseOtpAuth(uri: String): TotpSpec {
         val parsed = URI(uri.trim())
         require(parsed.scheme.equals("otpauth", ignoreCase = true)) { "Not an otpauth link." }
+        require(parsed.host.equals("totp", ignoreCase = true)) { "Only time-based (TOTP) codes are supported." }
         val query = parsed.rawQuery.orEmpty().split('&').mapNotNull { part ->
             val bits = part.split('=', limit = 2)
             if (bits.size == 2) bits[0] to java.net.URLDecoder.decode(bits[1], Charsets.UTF_8) else null
@@ -47,13 +56,17 @@ object Totp {
         val secret = query["secret"] ?: throw IllegalArgumentException("Missing secret.")
         val digits = query["digits"]?.toIntOrNull() ?: 6
         val period = query["period"]?.toIntOrNull() ?: 30
+        require(digits in MIN_DIGITS..MAX_DIGITS) { "Code length must be 6 to 8 digits." }
+        require(period in MIN_PERIOD..MAX_PERIOD) { "Code period must be 1 to 300 seconds." }
+        val key = decodeBase32(secret)
+        require(key.isNotEmpty()) { "Missing secret." }
         val algo = when (query["algorithm"]?.uppercase()) {
             "SHA256" -> "HmacSHA256"
             "SHA512" -> "HmacSHA512"
             else -> "HmacSHA1"
         }
         val label = parsed.path.trimStart('/').substringAfter(':').ifBlank { parsed.path.trimStart('/') }
-        return TotpSpec(label, decodeBase32(secret), digits, period, algo, uri.trim())
+        return TotpSpec(label, key, digits, period, algo, uri.trim())
     }
 
     fun decodeBase32(raw: String): ByteArray {

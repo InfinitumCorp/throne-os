@@ -150,6 +150,19 @@ data class VaultDocument(
 }
 
 object NetherVault {
+    /** Largest backup file Nether will read back. */
+    const val MAX_BACKUP_BYTES: Int = 64 * 1024 * 1024
+
+    /** True when the bytes have a readable Nether vault header. Says nothing about the password. */
+    fun isVault(bytes: ByteArray): Boolean =
+        bytes.size <= MAX_BACKUP_BYTES && runCatching { NetherCipher.parse(bytes) }.isSuccess
+
+    /** File name for an encrypted backup, e.g. nether-backup-2026-11-13.nether. */
+    fun backupName(epochMillis: Long): String {
+        val date = java.time.Instant.ofEpochMilli(epochMillis).atZone(java.time.ZoneOffset.UTC).toLocalDate()
+        return "nether-backup-$date.nether"
+    }
+
     fun create(password: CharArray, document: VaultDocument = VaultDocument()): ByteArray {
         val salt = NetherKdf.randomSalt()
         val key = NetherKdf.derive(password, salt)
@@ -171,9 +184,10 @@ object NetherVault {
         return Unlock(document, key)
     }
 
+    /** Re-seals with the same salt and key cost (the key was derived from them). Always writes the current format. */
     fun save(key: ByteArray, blob: ByteArray, document: VaultDocument): ByteArray {
         val header = NetherCipher.parse(blob)
-        return NetherCipher.seal(key, document.toJson(), header.salt, header.kdf)
+        return NetherCipher.seal(key, document.toJson(), header.salt, header.kdf, header.params)
     }
 }
 

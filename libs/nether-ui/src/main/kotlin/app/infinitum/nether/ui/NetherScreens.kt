@@ -26,12 +26,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -51,6 +54,7 @@ import com.infinitum.throne.ui.ThronePaper
 import com.infinitum.throne.ui.throneFieldColors
 import org.json.JSONObject
 import java.util.Base64
+import kotlinx.coroutines.delay
 
 private enum class Screen { LOCK, CREATE, LIST, EDIT, GENERATE, TOTP, HEALTH, SETTINGS }
 
@@ -69,15 +73,45 @@ fun NetherRoot(store: NetherStore) {
         )
     }
     var message by remember { mutableStateOf("") }
-    var query by remember { mutableStateOf("") }
-    var editing by remember { mutableStateOf(NetherEntry()) }
+    // Keyed to the session, so a half-edited entry (and its password) is dropped when the vault locks.
+    var query by remember(generation) { mutableStateOf("") }
+    var editing by remember(generation) { mutableStateOf(NetherEntry()) }
     var favoritesOnly by remember { mutableStateOf(false) }
-    val meta = remember { Meta(store) }
+    val meta = remember { Meta(store, context.packageName) }
+    var checking by remember { mutableStateOf(false) }
     val scan = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val text = result.data?.getStringExtra(QrScanActivity.EXTRA).orEmpty()
         if (result.resultCode == Activity.RESULT_OK && text.startsWith("otpauth://")) {
             editing = editing.copy(totp = text)
             screen = Screen.EDIT
+        }
+    }
+
+    // Restore an encrypted backup. Only offered before a vault exists, so it never overwrites one.
+    val restore = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bytes = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val buffer = java.io.ByteArrayOutputStream()
+                val chunk = ByteArray(64 * 1024)
+                while (true) {
+                    val read = input.read(chunk)
+                    if (read < 0) break
+                    buffer.write(chunk, 0, read)
+                    if (buffer.size() > NetherVault.MAX_BACKUP_BYTES) return@use null
+                }
+                buffer.toByteArray()
+            }
+        }.getOrNull()
+        when {
+            bytes == null || !NetherVault.isVault(bytes) -> message = "That file is not a Nether backup."
+            store.read(VaultFiles.PRIMARY) != null -> message = "A vault already exists. Nothing was replaced."
+            else -> {
+                store.write(VaultFiles.PRIMARY, bytes)
+                meta.write(meta.read().put("failures", 0))
+                message = "Backup restored. Unlock it with its master password."
+                screen = Screen.LOCK
+            }
         }
     }
 
@@ -94,7 +128,7 @@ fun NetherRoot(store: NetherStore) {
         }
         Spacer(Modifier.height(12.dp))
         when (screen) {
-            Screen.CREATE -> CreateVault(onCreate = { password, duress ->
+            Screen.CREATE -> CreateVault(onRestore = { restore.launch(arrayOf("*/*")) }, onCreate = { password, duress ->
                 val blob = NetherVault.create(password)
                 store.write(VaultFiles.PRIMARY, blob)
                 if (duress != null) store.write(VaultFiles.DECOY, NetherVault.create(duress))
@@ -107,6 +141,8 @@ fun NetherRoot(store: NetherStore) {
             Screen.LOCK -> LockScreen(
                 biometric = meta.biometric() != null && BiometricVault.available(activity),
                 onUnlock = { password ->
+                    // One attempt at a time, so repeated taps can't skip the delay or the wipe limit.
+                    if (checking) return@LockScreen
                     val failures = meta.failures()
                     if (meta.wipeAfter() > 0 && failures >= meta.wipeAfter()) {
                         store.delete(VaultFiles.PRIMARY)
@@ -115,6 +151,9 @@ fun NetherRoot(store: NetherStore) {
                         screen = Screen.CREATE
                         return@LockScreen
                     }
+                    checking = true
+                    // Count the attempt before trying it, so killing the app mid-check still counts.
+                    meta.write(meta.read().put("failures", failures + 1))
                     message = "Checking."
                     Thread {
                         Thread.sleep(NetherKdf.delayMillis(failures))
@@ -132,15 +171,15 @@ fun NetherRoot(store: NetherStore) {
                                 }
                                 decoyOpen != null -> {
                                     NetherSession.unlock(decoyOpen.document, decoyOpen.key, decoy = true)
+                                    meta.write(meta.read().put("failures", 0))
                                     screen = Screen.LIST
                                     message = ""
                                 }
                                 else -> {
-                                    val next = failures + 1
-                                    meta.write(meta.read().put("failures", next))
                                     message = "Wrong password."
                                 }
                             }
+                            checking = false
                         }
                     }.start()
                 },
@@ -148,7 +187,12 @@ fun NetherRoot(store: NetherStore) {
                     val packed = meta.biometric() ?: return@LockScreen
                     BiometricVault.unlock(activity, packed, onKey = { key ->
                         val blob = store.read(VaultFiles.PRIMARY) ?: return@unlock
-                        val doc = VaultDocumentFrom(key, blob)
+                        val doc = runCatching { VaultDocumentFrom(key, blob) }.getOrNull()
+                        if (doc == null) {
+                            key.fill(0)
+                            message = "Biometric unlock is out of date. Use your password, then set up biometric again."
+                            return@unlock
+                        }
                         NetherSession.unlock(doc, key, decoy = false)
                         screen = Screen.LIST
                     }, onError = { message = it })
@@ -161,7 +205,9 @@ fun NetherRoot(store: NetherStore) {
                 onToggleFavorites = { favoritesOnly = !favoritesOnly },
                 onOpen = { editing = it; screen = Screen.EDIT },
                 onAdd = { editing = NetherEntry(); screen = Screen.EDIT },
-                onGenerate = { screen = Screen.GENERATE },
+                // From the list, a generated password starts a new entry. It never lands in
+                // whichever entry happened to be opened last.
+                onGenerate = { editing = NetherEntry(); screen = Screen.GENERATE },
                 onTotp = { screen = Screen.TOTP },
                 onHealth = { screen = Screen.HEALTH },
                 onSettings = { screen = Screen.SETTINGS },
@@ -175,6 +221,12 @@ fun NetherRoot(store: NetherStore) {
                 },
                 onScan = {
                     scan.launch(Intent(context, QrScanActivity::class.java))
+                },
+                onGenerate = { screen = Screen.GENERATE },
+                onDelete = {
+                    deleteEntry(store, editing.id)
+                    editing = NetherEntry()
+                    screen = Screen.LIST
                 },
                 onBack = { screen = Screen.LIST },
             )
@@ -200,6 +252,17 @@ fun NetherRoot(store: NetherStore) {
 
 private fun VaultDocumentFrom(key: ByteArray, blob: ByteArray): app.infinitum.nether.core.VaultDocument {
     return app.infinitum.nether.core.VaultDocument.fromJson(app.infinitum.nether.core.NetherCipher.open(key, blob))
+}
+
+private fun deleteEntry(store: NetherStore, id: String) {
+    val key = NetherSession.key ?: return
+    val current = NetherSession.document ?: return
+    if (current.entries.none { it.id == id }) return
+    val document = current.copy(entries = current.entries.filterNot { it.id == id })
+    val name = if (NetherSession.decoy) VaultFiles.DECOY else VaultFiles.PRIMARY
+    val blob = store.read(name) ?: return
+    store.write(name, NetherVault.save(key, blob, document))
+    NetherSession.document = document
 }
 
 private fun saveEntry(store: NetherStore, entry: NetherEntry) {
@@ -232,7 +295,7 @@ private fun saveEntry(store: NetherStore, entry: NetherEntry) {
 }
 
 @Composable
-private fun CreateVault(onCreate: (CharArray, CharArray?) -> Unit) {
+private fun CreateVault(onRestore: () -> Unit, onCreate: (CharArray, CharArray?) -> Unit) {
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var duress by remember { mutableStateOf("") }
@@ -246,6 +309,9 @@ private fun CreateVault(onCreate: (CharArray, CharArray?) -> Unit) {
                 onCreate(password.toCharArray(), duress.toCharArray().takeIf { duress.length >= 4 })
             }
         })
+        Spacer(Modifier.height(8.dp))
+        Text("Have a backup? Restore it instead. It opens with the master password it was made with.", color = ThroneMuted)
+        ThroneButton("Restore from backup", onRestore)
     }
 }
 
@@ -305,8 +371,18 @@ private fun EntryList(
 }
 
 @Composable
-private fun Editor(entry: NetherEntry, onChange: (NetherEntry) -> Unit, onSave: () -> Unit, onScan: () -> Unit, onBack: () -> Unit) {
+private fun Editor(
+    entry: NetherEntry,
+    onChange: (NetherEntry) -> Unit,
+    onSave: () -> Unit,
+    onScan: () -> Unit,
+    onGenerate: () -> Unit,
+    onDelete: () -> Unit,
+    onBack: () -> Unit,
+) {
     val context = LocalContext.current
+    var confirmDelete by remember(entry.id) { mutableStateOf(false) }
+    val saved = NetherSession.document?.entries?.any { it.id == entry.id } == true
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Field("Title", entry.title) { onChange(entry.copy(title = it)) }
         Field("Type ${entry.type}", entry.type) { onChange(entry.copy(type = it)) }
@@ -315,8 +391,8 @@ private fun Editor(entry: NetherEntry, onChange: (NetherEntry) -> Unit, onSave: 
         Field("URL", entry.url) { onChange(entry.copy(url = it)) }
         Field("Folder", entry.folder) { onChange(entry.copy(folder = it)) }
         Field("Tags", entry.tags.joinToString(",")) { onChange(entry.copy(tags = it.split(',').map { tag -> tag.trim() }.filter { tag -> tag.isNotEmpty() })) }
-        Field("Notes", entry.notes) { onChange(entry.copy(notes = it)) }
-        Field("otpauth", entry.totp) { onChange(entry.copy(totp = it)) }
+        Field("Notes", entry.notes, sensitive = true) { onChange(entry.copy(notes = it)) }
+        Field("otpauth", entry.totp, sensitive = true) { onChange(entry.copy(totp = it)) }
         Text("Strength ${PasswordGenerator.strength(entry.secret)} / 4", color = ThroneMuted)
         if (entry.history.isNotEmpty()) Text("History ${entry.history.size}", color = ThroneMuted)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -324,6 +400,14 @@ private fun Editor(entry: NetherEntry, onChange: (NetherEntry) -> Unit, onSave: 
             ThroneButton("Scan", onScan)
             ThroneButton("Copy", { NetherClipboard.copy(context, entry.secret) })
             ThroneButton("Back", onBack)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ThroneButton("Generate", onGenerate)
+            if (saved) {
+                ThroneButton(if (confirmDelete) "Tap again to delete" else "Delete", {
+                    if (confirmDelete) onDelete() else confirmDelete = true
+                })
+            }
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -351,12 +435,18 @@ private fun GeneratorScreen(onUse: (String) -> Unit, onBack: () -> Unit) {
 @Composable
 private fun TotpScreen(onBack: () -> Unit, onCopy: (String) -> Unit) {
     val doc = NetherSession.document
-    val now = System.currentTimeMillis()
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000 - System.currentTimeMillis() % 1000)
+            now = System.currentTimeMillis()
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         doc?.entries?.filter { it.totp.startsWith("otpauth://") }?.forEach { entry ->
             val spec = runCatching { Totp.parseOtpAuth(entry.totp) }.getOrNull()
-            val code = spec?.let { Totp.code(it.secret, now, it.period, it.digits, it.algorithm) } ?: "------"
-            Text("${entry.title}  $code  ${Totp.remainingSeconds(now)}s", color = ThroneInk, modifier = Modifier.clickable { onCopy(code) })
+            val code = spec?.let { runCatching { Totp.code(it.secret, now, it.period, it.digits, it.algorithm) }.getOrNull() } ?: "------"
+            Text("${entry.title}  $code  ${spec?.let { Totp.remainingSeconds(now, it.period) } ?: 0}s", color = ThroneInk, modifier = Modifier.clickable { onCopy(code) })
         }
         ThroneButton("Back", onBack)
     }
@@ -389,17 +479,40 @@ private fun SettingsScreen(
         ThroneButton("Save limit", {
             meta.write(meta.read().put("wipeAfter", wipe.toIntOrNull() ?: 0))
         })
+        var bioStatus by remember { mutableStateOf("") }
         ThroneButton("Enroll biometric", {
             val key = NetherSession.key ?: return@ThroneButton
+            if (!BiometricVault.available(activity)) {
+                bioStatus = "No strong fingerprint or face unlock is set up on this phone."
+                return@ThroneButton
+            }
             BiometricVault.enroll(activity, key, onDone = { packed ->
-                meta.write(meta.read().put("biometric", Base64.getEncoder().encodeToString(packed)))
-            }, onError = {})
+                // In a duress session, look the same but never store the decoy key:
+                // biometric unlock always opens the real vault.
+                if (!NetherSession.decoy) {
+                    meta.write(meta.read().put(meta.biometricField, Base64.getEncoder().encodeToString(packed)))
+                }
+                bioStatus = "Biometric unlock is on."
+            }, onError = { bioStatus = it })
         })
-        val export = store.read(if (NetherSession.decoy) VaultFiles.DECOY else VaultFiles.PRIMARY)
-        if (export != null) {
-            Text("Export is the encrypted .nether blob. Share it from a file manager in this app's files.", color = ThroneMuted)
+        if (bioStatus.isNotEmpty()) Text(bioStatus, color = ThroneMuted)
+        val context = LocalContext.current
+        var backupStatus by remember { mutableStateOf("") }
+        val backup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            val blob = store.read(if (NetherSession.decoy) VaultFiles.DECOY else VaultFiles.PRIMARY)
+            backupStatus = if (blob == null) {
+                "Nothing to back up."
+            } else {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(blob) } ?: error("no stream")
+                }.fold({ "Backup saved. It is encrypted and opens only with your master password." }, { "Backup failed." })
+            }
         }
-        Field("Import CSV or otpauth", pasted) { pasted = it }
+        Text("Back up: saves the encrypted vault as a file you choose. Keep a copy off this phone.", color = ThroneMuted)
+        ThroneButton("Back up vault", { backup.launch(NetherVault.backupName(System.currentTimeMillis())) })
+        if (backupStatus.isNotEmpty()) Text(backupStatus, color = ThroneMuted)
+        Field("Import CSV or otpauth", pasted, sensitive = true) { pasted = it }
         ThroneButton("Import", {
             val note = Importers.throneVaultNote(pasted)
             if (note != null) return@ThroneButton
@@ -416,6 +529,7 @@ private fun SettingsScreen(
                 store.write(if (NetherSession.decoy) VaultFiles.DECOY else VaultFiles.PRIMARY, NetherVault.save(key, blob, document))
                 NetherSession.document = document
             }
+            pasted = ""
         })
         ThroneButton("Lock", onLock)
         ThroneButton("Back", onBack)
@@ -424,9 +538,20 @@ private fun SettingsScreen(
 }
 
 @Composable
-private fun Field(label: String, value: String, onChange: (String) -> Unit) {
-    OutlinedTextField(value, onChange, modifier = Modifier.fillMaxWidth(), label = { Text(label) }, colors = throneFieldColors(), singleLine = true)
+private fun Field(label: String, value: String, sensitive: Boolean = false, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value,
+        onChange,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        // Password input type: keyboards don't learn, suggest or sync what is typed here.
+        keyboardOptions = if (sensitive) SecretKeyboard else KeyboardOptions.Default,
+        colors = throneFieldColors(),
+        singleLine = true,
+    )
 }
+
+private val SecretKeyboard = KeyboardOptions(keyboardType = KeyboardType.Password)
 
 @Composable
 private fun SecretField(label: String, value: String, onChange: (String) -> Unit) {
@@ -436,16 +561,26 @@ private fun SecretField(label: String, value: String, onChange: (String) -> Unit
         modifier = Modifier.fillMaxWidth(),
         label = { Text(label) },
         visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions.Default,
+        keyboardOptions = SecretKeyboard,
         colors = throneFieldColors(),
         singleLine = true,
     )
 }
 
-private class Meta(private val store: NetherStore) {
+/**
+ * Settings shared by Nether and Suite. Each app wraps the vault key with its own
+ * Keystore key, so the fingerprint copy is stored per app ("biometric:<package>").
+ */
+private class Meta(private val store: NetherStore, packageName: String) {
+    val biometricField = "biometric:$packageName"
     fun read(): JSONObject = store.read(VaultFiles.META)?.let { runCatching { JSONObject(it.toString(Charsets.UTF_8)) }.getOrNull() } ?: JSONObject()
     fun write(json: JSONObject) = store.write(VaultFiles.META, json.toString().toByteArray())
     fun failures(): Int = read().optInt("failures")
     fun wipeAfter(): Int = read().optInt("wipeAfter")
-    fun biometric(): ByteArray? = read().optString("biometric").takeIf { it.isNotBlank() }?.let { Base64.getDecoder().decode(it) }
+    fun biometric(): ByteArray? {
+        val json = read()
+        // "biometric" is the old shared field; it only works in the app that enrolled it.
+        val value = json.optString(biometricField).ifBlank { json.optString("biometric") }
+        return value.takeIf { it.isNotBlank() }?.let { Base64.getDecoder().decode(it) }
+    }
 }

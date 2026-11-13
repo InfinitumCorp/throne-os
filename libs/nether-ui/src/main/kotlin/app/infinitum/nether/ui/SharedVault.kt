@@ -14,16 +14,29 @@ object VaultFiles {
     const val PRIMARY = "primary"
     const val DECOY = "decoy"
     const val META = "meta"
-    const val NETHER_AUTHORITY = "app.infinitum.nether.vault"
     const val SUITE_AUTHORITY = "com.infinitum.throne.suite.nether"
     const val PERMISSION = "app.infinitum.nether.ACCESS_VAULT"
 }
 
 class FileVaultStore(private val dir: File) : NetherStore {
     override fun read(name: String): ByteArray? = file(name).takeIf { it.exists() }?.readBytes()
+    /**
+     * Writes to a temporary file, flushes it to disk, then renames it over the old file,
+     * so a crash or power loss mid-save leaves either the old vault or the new one, never half.
+     */
     override fun write(name: String, bytes: ByteArray) {
         dir.mkdirs()
-        file(name).writeBytes(bytes)
+        val target = file(name)
+        val temp = File(dir, "$name.vault.tmp")
+        java.io.FileOutputStream(temp).use { out ->
+            out.write(bytes)
+            out.flush()
+            out.fd.sync()
+        }
+        if (!temp.renameTo(target)) {
+            temp.delete()
+            throw java.io.IOException("Could not save the vault.")
+        }
     }
     override fun delete(name: String) {
         file(name).delete()
@@ -67,11 +80,5 @@ object SharedVault {
             remote.read(VaultFiles.META)?.let { local.write(VaultFiles.META, it) }
         }
         return local
-    }
-
-    fun forSuite(context: Context): NetherStore {
-        val remote = RemoteVaultStore(context, VaultFiles.NETHER_AUTHORITY)
-        if (remote.read(VaultFiles.META) != null || remote.read(VaultFiles.PRIMARY) != null) return remote
-        return FileVaultStore(File(context.filesDir, "nether"))
     }
 }

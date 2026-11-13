@@ -191,7 +191,7 @@ private fun Directory(edition: String, products: List<Product>, onOpen: (Product
                     )
                     Column(Modifier.weight(1f)) {
                         Text("Nether", style = MaterialTheme.typography.bodyLarge)
-                        Text("Passwords, codes, and notes. Same vault as the Nether app.", style = MaterialTheme.typography.bodySmall, color = ThroneMuted)
+                        Text("Passwords, codes, and notes. Opens the Nether app, which stays offline.", style = MaterialTheme.typography.bodySmall, color = ThroneMuted)
                     }
                 }
                 ThroneButton(
