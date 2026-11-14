@@ -1,23 +1,7 @@
 package com.infinitum.throne.guard
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -25,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -32,12 +17,19 @@ import com.infinitum.throne.core.audit.Finding
 import com.infinitum.throne.core.audit.FindingStatus
 import com.infinitum.throne.core.audit.InstalledApp
 import com.infinitum.throne.core.net.PrivateDnsPolicy
-import com.infinitum.throne.ui.ThroneButton
-import com.infinitum.throne.ui.ThroneCard
+import com.infinitum.throne.ui.IosDivider
+import com.infinitum.throne.ui.IosEmpty
+import com.infinitum.throne.ui.IosFooter
+import com.infinitum.throne.ui.IosGroup
+import com.infinitum.throne.ui.IosRow
+import com.infinitum.throne.ui.IosScreen
+import com.infinitum.throne.ui.IosSearchField
+import com.infinitum.throne.ui.IosSectionHeader
+import com.infinitum.throne.ui.IosStatusDot
+import com.infinitum.throne.ui.IosText
+import com.infinitum.throne.ui.IosTextButton
+import com.infinitum.throne.ui.ThroneInk
 import com.infinitum.throne.ui.ThroneMuted
-import com.infinitum.throne.ui.ThroneSection
-import com.infinitum.throne.ui.Wordmark
-import com.infinitum.throne.ui.throneFieldColors
 
 @Composable
 fun GuardScreen(viewModel: GuardViewModel) {
@@ -56,6 +48,13 @@ fun GuardScreen(viewModel: GuardViewModel) {
     }
 }
 
+private fun statusLabel(status: FindingStatus): String = when (status) {
+    FindingStatus.CLEAR -> "Clear"
+    FindingStatus.REVIEW -> "Review"
+    FindingStatus.UNKNOWN -> "Unknown"
+    FindingStatus.NOTE -> "Note"
+}
+
 @Composable
 private fun Dashboard(viewModel: GuardViewModel) {
     val context = LocalContext.current
@@ -69,145 +68,147 @@ private fun Dashboard(viewModel: GuardViewModel) {
             app.packageName.contains(query, true) ||
             app.grantedDangerous.any { it.contains(query, true) }
     }
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    val review = report?.findings?.count { it.status == FindingStatus.REVIEW } ?: 0
+    val open: (String) -> Unit = { destination ->
+        if (destination == "private_dns_guide") viewModel.showGuide() else GuardIntents.open(context, destination)
+    }
+    IosScreen(
+        title = "Guard",
+        trailing = { IosTextButton("Refresh", onClick = viewModel::refresh) },
     ) {
-        item {
-            Spacer(Modifier.height(8.dp))
-            Wordmark(edition = viewModel.edition.label, kicker = "Guard")
-            Text(
-                text = "Local audit. Nothing on this screen is enforced. Links open Android settings so you can change them.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = ThroneMuted,
-                modifier = Modifier.padding(top = 16.dp),
-            )
+        item(key = "summary") {
+            IosGroup {
+                IosRow(
+                    title = when {
+                        report == null -> "Reading this device"
+                        review == 0 -> "Nothing to review"
+                        review == 1 -> "1 item to review"
+                        else -> "$review items to review"
+                    },
+                    subtitle = "Local audit, ${viewModel.edition.label}. Nothing here is enforced. Rows open Android settings so you can change them.",
+                    subtitleLines = 3,
+                    leading = { IosStatusDot(on = report != null && review == 0) },
+                )
+            }
         }
-        item { ThroneSection("SECURE MESSAGING") }
+
+        item(key = "msg-header") { IosSectionHeader("Secure messaging") }
         if (messaging.isEmpty()) {
-            item { Text(if (viewModel.loading) "Reading this device." else "No messaging checks.", color = ThroneMuted) }
-        }
-        items(messaging, key = { it.id }) { finding ->
-            FindingCard(finding) { destination ->
-                if (destination == "private_dns_guide") viewModel.showGuide()
-                else GuardIntents.open(context, destination)
+            item(key = "msg-empty") {
+                IosGroup { IosEmpty(if (viewModel.loading) "Reading this device." else "No messaging checks.") }
             }
         }
-        item { ThroneSection("DEVICE") }
-        items(device, key = { it.id }) { finding ->
-            FindingCard(finding) { destination ->
-                if (destination == "private_dns_guide") viewModel.showGuide()
-                else GuardIntents.open(context, destination)
-            }
-        }
-        item { ThroneSection("CAMERA") }
-        item { SensorBlock(report?.camera.orEmpty(), "No app has camera permission granted.") { GuardIntents.open(context, "app:$it") } }
-        item { ThroneSection("MICROPHONE") }
-        item { SensorBlock(report?.microphone.orEmpty(), "No app has microphone permission granted.") { GuardIntents.open(context, "app:$it") } }
-        item { ThroneSection("LOCATION") }
-        item { SensorBlock(report?.location.orEmpty(), "No app has location permission granted.") { GuardIntents.open(context, "app:$it") } }
-        item { ThroneSection("PERMISSIONS") }
-        item {
-            OutlinedTextField(
+        findingGroups(messaging, open)
+
+        item(key = "dev-header") { IosSectionHeader("Device") }
+        findingGroups(device, open)
+
+        sensorSection("Camera", report?.camera.orEmpty(), "No app has camera permission granted.", context)
+        sensorSection("Microphone", report?.microphone.orEmpty(), "No app has microphone permission granted.", context)
+        sensorSection("Location", report?.location.orEmpty(), "No app has location permission granted.", context)
+
+        item(key = "perm-header") {
+            IosSectionHeader("Permissions")
+            IosSearchField(
                 value = viewModel.query,
                 onValueChange = { viewModel.query = it.take(80) },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Filter by app or permission", color = ThroneMuted) },
-                singleLine = true,
-                colors = throneFieldColors(),
-                keyboardOptions = KeyboardOptions.Default,
+                placeholder = "Filter by app or permission",
+                modifier = Modifier.padding(bottom = 8.dp),
             )
         }
-        items(apps, key = { "perm-${it.packageName}" }) { app ->
-            ThroneCard {
-                Text(app.label, style = MaterialTheme.typography.bodyLarge)
-                Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = ThroneMuted)
-                Text(
-                    text = if (app.grantedDangerous.isEmpty()) {
-                        "No dangerous permissions granted."
-                    } else {
-                        app.grantedDangerous.joinToString("  ") { it.removePrefix("android.permission.") }
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-                ThroneButton(
-                    text = "App settings",
-                    onClick = { GuardIntents.open(context, "app:${app.packageName}") },
-                    modifier = Modifier.padding(top = 12.dp),
-                )
+        item(key = "perm-list") {
+            IosGroup {
+                if (apps.isEmpty()) {
+                    IosEmpty(if (query.isEmpty()) "No apps to show." else "No apps match “$query”.")
+                }
+                apps.forEachIndexed { index, app ->
+                    if (index > 0) IosDivider()
+                    IosRow(
+                        title = app.label,
+                        subtitle = if (app.grantedDangerous.isEmpty()) {
+                            "No dangerous permissions granted."
+                        } else {
+                            app.grantedDangerous.joinToString(", ") { it.removePrefix("android.permission.") }
+                        },
+                        subtitleLines = 3,
+                        chevron = true,
+                        onClick = { GuardIntents.open(context, "app:${app.packageName}") },
+                    )
+                }
             }
+            IosFooter("No analytics. The only network call is the Private DNS check you start yourself.")
         }
-        item {
-            ThroneButton(text = "Refresh", onClick = viewModel::refresh, modifier = Modifier.padding(top = 8.dp))
-            Text(
-                text = "No analytics. The only network call is the Private DNS check you start yourself.",
-                style = MaterialTheme.typography.bodySmall,
-                color = ThroneMuted,
-                modifier = Modifier.padding(top = 16.dp, bottom = 28.dp),
-            )
+    }
+}
+
+private fun LazyListScope.findingGroups(findings: List<Finding>, onOpen: (String) -> Unit) {
+    findings.forEach { finding ->
+        item(key = "finding-${finding.id}") {
+            FindingGroup(finding, onOpen)
         }
     }
 }
 
 @Composable
-private fun FindingCard(finding: Finding, onOpen: (String) -> Unit) {
-    ThroneCard {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(finding.title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Text(
-                finding.status.name,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = if (finding.status == FindingStatus.REVIEW) FontWeight.Medium else FontWeight.Normal,
-            )
-        }
+private fun FindingGroup(finding: Finding, onOpen: (String) -> Unit) {
+    IosGroup(Modifier.padding(bottom = 12.dp)) {
+        IosRow(
+            title = finding.title,
+            value = statusLabel(finding.status),
+            leading = { IosStatusDot(on = finding.status == FindingStatus.CLEAR) },
+        )
         Text(
             finding.summary,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(top = 10.dp),
+            style = IosText.copy(fontSize = 15.sp, lineHeight = 20.sp),
+            color = ThroneMuted,
+            modifier = Modifier.padding(start = 40.dp, end = 16.dp, bottom = 12.dp),
         )
         finding.rows.forEach { row ->
             val destination = row.destination
-            Text(row.title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 10.dp))
-            Text(row.detail, style = MaterialTheme.typography.bodySmall, color = ThroneMuted)
-            if (destination != null) {
-                ThroneButton(
-                    text = "Open",
-                    onClick = { onOpen(destination) },
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
+            IosDivider(inset = 40.dp)
+            IosRow(
+                title = row.title,
+                subtitle = row.detail,
+                subtitleLines = 3,
+                chevron = destination != null,
+                modifier = Modifier.padding(start = 24.dp),
+                onClick = destination?.let { { onOpen(it) } },
+            )
         }
         val actionLabel = finding.actionLabel
         val actionDestination = finding.actionDestination
         if (actionLabel != null && actionDestination != null) {
-            ThroneButton(
-                text = actionLabel,
+            IosDivider(inset = 40.dp)
+            IosRow(
+                title = actionLabel,
+                chevron = true,
+                modifier = Modifier.padding(start = 24.dp),
                 onClick = { onOpen(actionDestination) },
-                modifier = Modifier.padding(top = 14.dp),
             )
         }
     }
 }
 
-@Composable
-private fun SensorBlock(apps: List<InstalledApp>, empty: String, onOpen: (String) -> Unit) {
-    if (apps.isEmpty()) {
-        Text(empty, style = MaterialTheme.typography.bodyMedium, color = ThroneMuted)
-        return
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        apps.forEach { app ->
-            ThroneCard {
-                Text(app.label, style = MaterialTheme.typography.bodyLarge)
-                Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = ThroneMuted)
-                ThroneButton(
-                    text = "App settings",
-                    onClick = { onOpen(app.packageName) },
-                    modifier = Modifier.padding(top = 10.dp),
+private fun LazyListScope.sensorSection(
+    title: String,
+    apps: List<InstalledApp>,
+    empty: String,
+    context: android.content.Context,
+) {
+    item(key = "sensor-$title") {
+        IosSectionHeader(title)
+        IosGroup {
+            if (apps.isEmpty()) {
+                IosRow(title = empty, titleColor = ThroneMuted)
+            }
+            apps.forEachIndexed { index, app ->
+                if (index > 0) IosDivider()
+                IosRow(
+                    title = app.label,
+                    subtitle = app.packageName,
+                    subtitleLines = 1,
+                    chevron = true,
+                    onClick = { GuardIntents.open(context, "app:${app.packageName}") },
                 )
             }
         }
@@ -219,45 +220,66 @@ private fun DnsGuide(viewModel: GuardViewModel) {
     val context = LocalContext.current
     val specifier = viewModel.snapshot?.privateDnsSpecifier?.trim().orEmpty()
     val mode = viewModel.snapshot?.privateDnsMode ?: "unread"
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Wordmark(edition = viewModel.edition.label, kicker = "Private DNS")
-        Text(
-            "Android does not let this app set Private DNS. You type the hostname. Nothing is contacted until you tap a check.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Text("Current mode: $mode", style = MaterialTheme.typography.bodyMedium)
-        Text(
-            "Current hostname: ${specifier.ifEmpty { "none" }}",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Text(
-            "1. Open network settings.\n2. On HiOS: Network and internet, then Private DNS.\n3. Choose Private DNS provider hostname.\n4. Enter ${PrivateDnsPolicy.RECOMMENDED_HOST}\n5. Return here and refresh.\n\n${PrivateDnsPolicy.RECOMMENDED_HOST} is a public tracker-blocking resolver, not an Infinitum server. dns.quad9.net is another public choice. Use VEIL’s own resolver when you have its hostname. Private DNS is not a substitute for always-on VEIL with lockdown.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        ThroneButton(text = "Open network settings", onClick = { GuardIntents.open(context, "wireless") })
-        ThroneButton(
-            text = if (viewModel.probing) "Checking" else "Check recommended resolver",
-            onClick = viewModel::probeRecommended,
-            enabled = !viewModel.probing,
-        )
-        if (specifier.isNotEmpty()) {
-            ThroneButton(
-                text = "Check the hostname set on this phone",
-                onClick = viewModel::probeConfigured,
-                enabled = !viewModel.probing,
+    IosScreen(title = "Private DNS", backLabel = "Guard", onBack = viewModel::showDashboard) {
+        item(key = "current") {
+            IosGroup {
+                IosRow(title = "Mode", value = mode)
+                IosDivider()
+                IosRow(title = "Hostname", value = specifier.ifEmpty { "None" })
+            }
+            IosFooter("Android does not let this app set Private DNS. You type the hostname. Nothing is contacted until you tap a check.")
+        }
+        item(key = "steps") {
+            IosSectionHeader("Set it up")
+            IosGroup {
+                listOf(
+                    "Open network settings.",
+                    "On HiOS: Network and internet, then Private DNS.",
+                    "Choose Private DNS provider hostname.",
+                    "Enter ${PrivateDnsPolicy.RECOMMENDED_HOST}",
+                    "Return here and refresh.",
+                ).forEachIndexed { index, step ->
+                    if (index > 0) IosDivider(inset = 48.dp)
+                    IosRow(
+                        title = step,
+                        leading = {
+                            Text(
+                                "${index + 1}",
+                                style = IosText.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+                                modifier = Modifier.padding(end = 2.dp),
+                            )
+                        },
+                    )
+                }
+            }
+            IosFooter(
+                "${PrivateDnsPolicy.RECOMMENDED_HOST} is a public tracker-blocking resolver, not an Infinitum server. dns.quad9.net is another public choice. Use VEIL’s own resolver when you have its hostname. Private DNS is not a substitute for always-on VEIL with lockdown.",
             )
         }
-        viewModel.probeMessage?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium)
+        item(key = "actions") {
+            IosSectionHeader("Actions")
+            IosGroup {
+                IosRow(
+                    title = "Open network settings",
+                    chevron = true,
+                    onClick = { GuardIntents.open(context, "wireless") },
+                )
+                IosDivider()
+                IosRow(
+                    title = if (viewModel.probing) "Checking…" else "Check recommended resolver",
+                    titleColor = if (viewModel.probing) ThroneMuted else ThroneInk,
+                    onClick = if (viewModel.probing) null else viewModel::probeRecommended,
+                )
+                if (specifier.isNotEmpty()) {
+                    IosDivider()
+                    IosRow(
+                        title = "Check the hostname set on this phone",
+                        titleColor = if (viewModel.probing) ThroneMuted else ThroneInk,
+                        onClick = if (viewModel.probing) null else viewModel::probeConfigured,
+                    )
+                }
+            }
+            viewModel.probeMessage?.let { IosFooter(it) }
         }
-        ThroneButton(text = "Back", onClick = viewModel::showDashboard)
-        Spacer(Modifier.height(12.dp))
     }
 }
