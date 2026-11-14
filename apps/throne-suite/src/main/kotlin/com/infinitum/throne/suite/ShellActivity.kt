@@ -51,11 +51,24 @@ import com.infinitum.throne.core.catalog.ProductCatalog
 import com.infinitum.throne.core.catalog.ShelfKind
 import com.infinitum.throne.core.home.EditionPolicy
 import com.infinitum.throne.ui.HydratedTile
-import com.infinitum.throne.ui.ThroneButton
-import com.infinitum.throne.ui.ThroneCard
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
+import com.infinitum.throne.ui.IosDivider
+import com.infinitum.throne.ui.IosEmpty
+import com.infinitum.throne.ui.IosFooter
+import com.infinitum.throne.ui.IosGroup
+import com.infinitum.throne.ui.IosPillButton
+import com.infinitum.throne.ui.IosRow
+import com.infinitum.throne.ui.IosScreen
+import com.infinitum.throne.ui.IosSearchField
+import com.infinitum.throne.ui.IosSectionHeader
+import com.infinitum.throne.ui.IosText
+import com.infinitum.throne.ui.IosTextButton
 import com.infinitum.throne.ui.ThroneMuted
 import com.infinitum.throne.ui.ThroneTheme
-import com.infinitum.throne.ui.Wordmark
 
 /**
  * Opens a catalog product in this order: the installed native app, then this
@@ -164,104 +177,115 @@ private fun SuiteScreen(
 
 @Composable
 private fun Directory(edition: String, products: List<Product>, onOpen: (Product) -> Unit) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Wordmark(edition = edition, kicker = "Suite")
-            Text(
-                "An installed app opens on its own. Otherwise this shell opens the product site, or Coming soon when no site is published. No tracker is added.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = ThroneMuted,
-                modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
-            )
+    val context = LocalContext.current
+    var query by remember { mutableStateOf("") }
+    val shown = remember(query, products) {
+        val q = query.trim()
+        if (q.isEmpty()) products else products.filter { it.name.contains(q, ignoreCase = true) || it.summary.contains(q, ignoreCase = true) }
+    }
+    IosScreen(title = "Suite") {
+        item(key = "search") {
+            IosSearchField(value = query, onValueChange = { query = it }, modifier = Modifier.padding(bottom = 6.dp))
         }
-        item(key = "nether") {
-            val context = LocalContext.current
-            ThroneCard {
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    HydratedTile(
-                        productId = "nether",
-                        contentDescription = "Nether",
-                        modifier = Modifier.size(52.dp),
+        if (query.isBlank()) {
+            item(key = "nether") {
+                IosSectionHeader("Vault")
+                IosGroup {
+                    IosRow(
+                        title = "Nether",
+                        subtitle = "Passwords, codes and notes. Stays offline.",
+                        leading = { HydratedTile(productId = "nether", contentDescription = "Nether", flat = true, modifier = Modifier.size(44.dp)) },
+                        trailing = { IosPillButton("OPEN", onClick = { context.startActivity(Intent(context, NetherActivity::class.java)) }) },
+                        onClick = { context.startActivity(Intent(context, NetherActivity::class.java)) },
                     )
-                    Column(Modifier.weight(1f)) {
-                        Text("Nether", style = MaterialTheme.typography.bodyLarge)
-                        Text("Passwords, codes, and notes. Opens the Nether app, which stays offline.", style = MaterialTheme.typography.bodySmall, color = ThroneMuted)
-                    }
                 }
-                ThroneButton(
-                    text = "Open",
-                    onClick = { context.startActivity(Intent(context, NetherActivity::class.java)) },
-                    modifier = Modifier.padding(top = 10.dp),
-                )
             }
         }
-        items(products, key = { it.id }) { product ->
-            val context = LocalContext.current
-            val kind = when {
-                NativeApps.isInstalled(context, product) -> ShelfKind.NATIVE
-                product.url != null -> ShelfKind.WEB
-                else -> ShelfKind.PLACEHOLDER
-            }
-            ThroneCard {
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    HydratedTile(
-                        productId = product.id,
-                        contentDescription = product.name,
-                        modifier = Modifier.size(52.dp),
-                    )
-                    Column(Modifier.weight(1f)) {
-                        Text(product.name, style = MaterialTheme.typography.bodyLarge)
-                        Text(product.summary, style = MaterialTheme.typography.bodySmall, color = ThroneMuted)
+        item(key = "products-header") { IosSectionHeader("Products") }
+        if (shown.isEmpty()) {
+            item(key = "none") { IosGroup { IosEmpty("No products match “${query.trim()}”.") } }
+        } else {
+            item(key = "products") {
+                IosGroup {
+                    shown.forEachIndexed { index, product ->
+                        if (index > 0) IosDivider(inset = 74.dp)
+                        val kind = when {
+                            NativeApps.isInstalled(context, product) -> ShelfKind.NATIVE
+                            product.url != null -> ShelfKind.WEB
+                            else -> ShelfKind.PLACEHOLDER
+                        }
+                        IosRow(
+                            title = product.name,
+                            subtitle = product.summary,
+                            leading = { HydratedTile(productId = product.id, contentDescription = product.name, flat = true, modifier = Modifier.size(44.dp)) },
+                            trailing = {
+                                IosPillButton(
+                                    text = when (kind) {
+                                        ShelfKind.NATIVE -> "OPEN"
+                                        ShelfKind.WEB -> "VIEW"
+                                        ShelfKind.PLACEHOLDER -> "SOON"
+                                    },
+                                    onClick = { onOpen(product) },
+                                )
+                            },
+                            onClick = { onOpen(product) },
+                        )
                     }
                 }
-                ThroneButton(
-                    text = when (kind) {
-                        ShelfKind.NATIVE -> "Open app"
-                        ShelfKind.WEB -> "Open site"
-                        ShelfKind.PLACEHOLDER -> "Coming soon"
-                    },
-                    onClick = { onOpen(product) },
-                    modifier = Modifier.padding(top = 10.dp),
-                )
             }
+        }
+        item(key = "footer") {
+            IosFooter("An installed app opens on its own. Otherwise this shell opens the product site, or Coming soon when no site is published. No tracker is added.")
+            IosFooter("THRONE][OS™ $edition")
         }
     }
 }
 
 @Composable
 private fun ComingSoon(edition: String, product: Product, onBack: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Wordmark(edition = edition, kicker = product.name)
-        Text("Coming soon", style = MaterialTheme.typography.headlineSmall)
-        Text(product.summary, style = MaterialTheme.typography.bodyMedium)
-        ThroneButton(text = "Back", onClick = onBack)
+    IosScreen(title = product.name, backLabel = "Suite", onBack = onBack) {
+        item(key = "hero") {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp, bottom = 8.dp),
+            ) {
+                HydratedTile(productId = product.id, contentDescription = product.name, flat = true, modifier = Modifier.size(96.dp))
+                Text(
+                    "Coming soon",
+                    style = IosText.copy(fontSize = 22.sp, fontWeight = FontWeight.Bold),
+                    modifier = Modifier.padding(top = 16.dp),
+                )
+                Text(
+                    "No site is published for this product yet.",
+                    style = IosText.copy(fontSize = 15.sp),
+                    color = ThroneMuted,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+        item(key = "about") {
+            IosSectionHeader("About")
+            IosGroup {
+                Text(
+                    product.summary,
+                    style = IosText.copy(fontSize = 17.sp, lineHeight = 23.sp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
+            }
+            IosFooter("THRONE][OS™ $edition")
+        }
     }
 }
 
 @Composable
 private fun Missing(edition: String, onBack: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Wordmark(edition = edition, kicker = "Suite")
-        Text("That product is not in this edition.", style = MaterialTheme.typography.bodyLarge)
-        ThroneButton(text = "Back", onClick = onBack)
+    IosScreen(title = "Suite", backLabel = "Suite", onBack = onBack) {
+        item(key = "missing") {
+            IosGroup { IosEmpty("That product is not in this edition.") }
+            IosFooter("THRONE][OS™ $edition")
+        }
     }
 }
 
@@ -277,16 +301,32 @@ private fun WebShell(product: Product, onBack: () -> Unit) {
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+                .height(48.dp)
+                .padding(horizontal = 8.dp),
         ) {
-            Text(product.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            ThroneButton(text = "Close", onClick = onBack)
+            IosTextButton("Done", onClick = onBack, bold = true, modifier = Modifier.align(Alignment.CenterStart))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 80.dp),
+            ) {
+                Text(
+                    product.name,
+                    style = IosText.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val host = remember(product.url) { product.url?.let { android.net.Uri.parse(it).host } }
+                if (host != null) {
+                    Text(host, style = IosText.copy(fontSize = 12.sp), color = ThroneMuted, maxLines = 1)
+                }
+            }
         }
+        IosDivider(inset = 0.dp)
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
